@@ -42,7 +42,8 @@ const Config = {
     "2nd Contact",
     "3rd Contact",
     "Do Not Call",
-    "Already has VZ",
+    "Already has Fiber",
+    "Sold",
     "Yes",
   ],
 

@@ -2448,7 +2448,6 @@ function renderLeadFeedCard(myLeads) {
         minute: "2-digit",
       });
 
-      // Removed "Pending Order" install check
       callbackAlert.innerHTML = `📅 ACTION REQUIRED: Scheduled follow-up today at ${timeString}`;
       callbackAlert.style.display = "block";
     }
@@ -2464,16 +2463,33 @@ function renderLeadFeedCard(myLeads) {
     metaHtml += `<span class="feed-meta">📍 ${escHtml(lead.address)}${lead.city ? ", " + escHtml(lead.city) : ""}${lead.state ? " " + escHtml(lead.state) : ""}${lead.zip ? " " + escHtml(lead.zip) : ""}</span>`;
   clone.getElementById("feed-meta-container").innerHTML = metaHtml;
 
-  // Form Inputs
+  // 🚀 RESTORED: Form Inputs & Products Dropdown
   clone.getElementById("feed-btn").value =
     lead.btn || lead.BTN || lead.phone || "";
   clone.getElementById("feed-cbr").value = lead.cbr || lead.CBR || "";
   clone.getElementById("feed-mrc").value = lead.currentMRC || lead.mrc || "";
 
-  // 🚀 NEW: VZ Custom Inputs
-  clone.getElementById("feed-provider").value = lead.currentProvider || "";
-  clone.getElementById("feed-lines").value = lead.numberOfLines || "";
-  clone.getElementById("feed-quoted").value = lead.quotedAt || "";
+  const productsSelect = clone.getElementById("feed-products");
+  if (
+    productsSelect &&
+    typeof Config !== "undefined" &&
+    Config.currentProducts
+  ) {
+    Config.currentProducts.forEach((p) => {
+      const opt = document.createElement("option");
+      opt.value = p;
+      opt.textContent = p;
+      productsSelect.appendChild(opt);
+    });
+  }
+
+  // THE DRAFT PEEK (Moved up to access product values)
+  const draft = State.drafts[lead.id] || {};
+  const activeProducts =
+    draft.currentProducts !== undefined
+      ? draft.currentProducts
+      : lead.currentProducts;
+  if (productsSelect) productsSelect.value = activeProducts || "";
 
   // ==========================================
   // 2. PULLING THE SAVED CALLBACK DATE UI
@@ -2560,23 +2576,6 @@ function renderLeadFeedCard(myLeads) {
     soldBySelect.appendChild(option);
   });
 
-  // THE DRAFT PEEK
-  const draft = State.drafts[lead.id] || {};
-  const activePhoneStatus =
-    draft.phoneStatus !== undefined ? draft.phoneStatus : lead.phoneStatus;
-
-  // 🚀 NEW: Phone Status Radios
-  const phoneStatusContainer = clone.getElementById(
-    "feed-phonestatus-container",
-  );
-  ["Paid Off", "Under Installments"].forEach((opt) => {
-    const isChecked = activePhoneStatus === opt ? "checked" : "";
-    phoneStatusContainer.innerHTML += `
-      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;color:#1A2640;background:#F4F7FD;border:1px solid #D0DCF0;padding:8px 14px;border-radius:6px;">
-        <input type="radio" name="feed-phonestatus" value="${opt}" ${isChecked} style="accent-color:#2563B0"> ${opt}
-      </label>`;
-  });
-
   // Status Buttons
   const statusContainer = clone.getElementById("feed-status-buttons");
   const hiddenStatuses = ["New", "TD Non-Reg", "D2D Lead"];
@@ -2615,20 +2614,20 @@ function renderLeadFeedCard(myLeads) {
           const agent = match[2] ? match[2].replace(/^\s*-\s*/, "") : "";
           const text = match[3];
           return `
-            <div style="margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid #E8EFF8">
+            <div style="margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid rgba(255,255,255,0.05)">
               <div style="display:flex;gap:8px;align-items:center;margin-bottom:3px">
-                <span style="font-family:var(--font-mono);font-size:10px;color:#2563B0;font-weight:700;background:#E8F0FF;padding:1px 6px;border-radius:3px">${date}</span>
-                ${agent ? `<span style="font-family:var(--font-mono);font-size:10px;color:#6B85B0">${escHtml(agent)}</span>` : ""}
+                <span style="font-family:var(--font-mono);font-size:10px;color:var(--cyan);font-weight:700;background:var(--cyan-dim);padding:2px 6px;border-radius:4px">${date}</span>
+                ${agent ? `<span style="font-family:var(--font-mono);font-size:10px;color:var(--text-3)">${escHtml(agent)}</span>` : ""}
               </div>
-              <span style="font-size:13px;color:#1A2640">${escHtml(text)}</span>
+              <span style="font-size:13px;color:var(--text-1)">${escHtml(text)}</span>
             </div>`;
         }
         return `
-          <div style="margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid #E8EFF8">
+          <div style="margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid rgba(255,255,255,0.05)">
             <div style="margin-bottom:3px">
-              <span style="font-family:var(--font-mono);font-size:10px;color:#8EA5C8;background:#F4F7FD;padding:1px 6px;border-radius:3px">Legacy note — author unknown</span>
+              <span style="font-family:var(--font-mono);font-size:10px;color:var(--text-3);background:var(--surface);padding:2px 6px;border-radius:4px">Legacy note — author unknown</span>
             </div>
-            <span style="font-size:13px;color:#4A6080">${escHtml(line)}</span>
+            <span style="font-size:13px;color:var(--text-2)">${escHtml(line)}</span>
           </div>`;
       })
       .join("");
@@ -2643,12 +2642,9 @@ function renderLeadFeedCard(myLeads) {
     { id: "feed-btn", key: "btn" },
     { id: "feed-cbr", key: "cbr" },
     { id: "feed-mrc", key: "mrc" },
+    { id: "feed-products", key: "currentProducts" }, // 🚀 RESTORED
     { id: "feed-notes", key: "notes" },
     { id: "feed-sold-by", key: "soldBy" },
-    // 🚀 NEW: Draft bindings for the new inputs
-    { id: "feed-provider", key: "currentProvider" },
-    { id: "feed-lines", key: "numberOfLines" },
-    { id: "feed-quoted", key: "quotedAt" },
   ];
 
   inputsToDraft.forEach((item) => {
@@ -2663,18 +2659,6 @@ function renderLeadFeedCard(myLeads) {
       );
     }
   });
-
-  // 🚀 NEW: Radio button listener for Phone Status
-  const allPhoneRadios = clone.querySelectorAll(
-    'input[name="feed-phonestatus"]',
-  );
-  if (allPhoneRadios.length > 0) {
-    allPhoneRadios.forEach((r) => {
-      r.addEventListener("change", (e) =>
-        updateLeadDraft(lead.id, "phoneStatus", e.target.value),
-      );
-    });
-  }
 
   // Wrap and Return
   const wrapper = document.createElement("div");
@@ -4285,6 +4269,9 @@ const Automation = {
       ? contractor.name.toLowerCase().trim()
       : userName;
 
+    // 🚀 SESSION MEMORY: Keep track of leads we just blasted so background polling doesn't resurrect them
+    window._blastedSessionLeads = window._blastedSessionLeads || new Set();
+
     // Filter leads safely
     const eligibleLeads = (State.leads || []).filter((l) => {
       // 🛑 TCPA CIRCUIT BREAKER: Never include opted-out contacts
@@ -4296,8 +4283,11 @@ const Automation = {
       // 🛑 THE ACTIVE CONVERSATION SHIELD: Never blast a lead waiting for a human reply!
       if (l.SMSUnread === true || l.smsUnread === true) return false;
 
-      // 🚀 NEW: Hide leads that were already automation-contacted if looking at "New"
-      if (statusFilter === "New" && l.SMSContacted === true) return false;
+      // 🚀 THE UNIVERSAL FILTER: Globally hide leads that have been SMS Contacted
+      if (l.SMSContacted === true || l.smsContacted === true) return false;
+
+      // 🚀 THE POLTERGEIST SHIELD: Block leads we just blasted (bypassing Microsoft's sync lag)
+      if (window._blastedSessionLeads.has(l.id)) return false;
 
       // Must have a valid phone number (Phone or CBR)
       const rawPhone = l.phone || l.cbr || l.CBR || "";
@@ -4415,7 +4405,6 @@ const Automation = {
     const charCountEl = document.getElementById("auto-char-count");
     if (!textarea || !previewEl) return;
 
-    // 🚀 THE FIX: Force the HTML to respect \n line breaks
     previewEl.style.whiteSpace = "pre-wrap";
 
     const rawText = textarea.value;
@@ -4435,7 +4424,6 @@ const Automation = {
       BTN: "727-555-0199",
     };
 
-    // 🚀 FIRST NAME ONLY: Trims whitespace and extracts the first token
     const agentFirstName =
       State.currentUser && State.currentUser.name
         ? State.currentUser.name.trim().split(/\s+/)[0]
@@ -4555,7 +4543,6 @@ const Automation = {
         continue;
       }
 
-      // 🚀 FIRST NAME ONLY
       const agentFirstName =
         State.currentUser && State.currentUser.name
           ? State.currentUser.name.trim().split(/\s+/)[0]
@@ -4591,9 +4578,14 @@ const Automation = {
         const cbrToSend = cleanPhone.slice(-10);
         await Graph.sendTextMessage(cbrToSend, personalizedBody);
 
-        // 🚀 NEW: Update SMSContacted flag instead of changing Status
+        // 🚀 NEW: Update SMSContacted flag
         await Graph.updateLead(lead.id, { SMSContacted: true });
         lead.SMSContacted = true;
+
+        // 🚀 SESSION MEMORY: Mark as blasted so it instantly vanishes from the UI
+        window._blastedSessionLeads = window._blastedSessionLeads || new Set();
+        window._blastedSessionLeads.add(lead.id);
+
         sentCount++;
 
         if (typeof Graph !== "undefined" && Graph.logActivity) {
@@ -4649,7 +4641,6 @@ const Automation = {
   },
 
   resetCurrentTemplate() {
-    // 🚀 SECURITY WALL
     if (typeof isContractorUser === "function" && isContractorUser()) return;
 
     const key = this.currentTemplateKey;
@@ -4670,12 +4661,10 @@ const Automation = {
       return;
     }
 
-    // Overwrite local storage with the default from Config
     const templates = this.getTemplates();
     templates[key] = Config.smsTemplates[key];
     localStorage.setItem("RaimakSMSTemplates", JSON.stringify(templates));
 
-    // Update the textarea visually
     const textarea = document.getElementById("auto-template-body");
     if (textarea) textarea.value = Config.smsTemplates[key];
 
