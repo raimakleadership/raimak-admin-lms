@@ -537,7 +537,7 @@ const Graph = (() => {
     if (validTimestamps.length > 0) {
       const maxTime = Math.max(...validTimestamps);
       localStorage.setItem(
-        "RaimakVZLeadsLastSyncDate",
+        "RaimakAdminLeadsLastSyncDate",
         new Date(maxTime).toISOString(),
       );
     }

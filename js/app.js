@@ -4269,8 +4269,11 @@ const Automation = {
       ? contractor.name.toLowerCase().trim()
       : userName;
 
-    // 🚀 SESSION MEMORY: Keep track of leads we just blasted so background polling doesn't resurrect them
+    // 🚀 SESSION MEMORY: Keep track of leads we just blasted
     window._blastedSessionLeads = window._blastedSessionLeads || new Set();
+
+    let hiddenByFlag = 0;
+    let hiddenByUnread = 0;
 
     // Filter leads safely
     const eligibleLeads = (State.leads || []).filter((l) => {
@@ -4280,14 +4283,29 @@ const Automation = {
       // 🛑 THE VIP SHIELD: Never let automation touch a lead that is actively being worked!
       if (l.verifiedYes === true) return false;
 
-      // 🛑 THE ACTIVE CONVERSATION SHIELD: Never blast a lead waiting for a human reply!
-      if (l.SMSUnread === true || l.smsUnread === true) return false;
+      // 🛑 THE ACTIVE CONVERSATION SHIELD
+      if (l.SMSUnread === true || l.smsUnread === true) {
+        hiddenByUnread++;
+        return false;
+      }
 
       // 🚀 THE UNIVERSAL FILTER: Globally hide leads that have been SMS Contacted
-      if (l.SMSContacted === true || l.smsContacted === true) return false;
+      // (Checks all possible boolean/string variations that SharePoint might spit out)
+      if (
+        l.SMSContacted === true ||
+        l.smsContacted === true ||
+        l.SMSContacted === "Yes" ||
+        l.SMSContacted === "true"
+      ) {
+        hiddenByFlag++;
+        return false;
+      }
 
-      // 🚀 THE POLTERGEIST SHIELD: Block leads we just blasted (bypassing Microsoft's sync lag)
-      if (window._blastedSessionLeads.has(l.id)) return false;
+      // 🚀 THE POLTERGEIST SHIELD: Block leads we just blasted this session
+      if (window._blastedSessionLeads.has(l.id)) {
+        hiddenByFlag++;
+        return false;
+      }
 
       // Must have a valid phone number (Phone or CBR)
       const rawPhone = l.phone || l.cbr || l.CBR || "";
@@ -4315,9 +4333,12 @@ const Automation = {
       return true;
     });
 
+    console.log(
+      `🤖 Automation Filter: Hid ${hiddenByFlag} previously blasted leads, and ${hiddenByUnread} active conversations.`,
+    );
+
     this.renderAudienceTable(eligibleLeads);
   },
-
   // 7. Render Recipient Table
   renderAudienceTable(leads) {
     const tbody = document.getElementById("auto-recipient-tbody");
@@ -6984,8 +7005,18 @@ function promptTriageAutoReply() {
     document.body.appendChild(clone);
     overlay = document.getElementById("triage-autoreply-overlay");
 
-    // 🚀 NEW: Populate the Agent Dropdown dynamically
+    // Map DOM elements
     const agentSelect = document.getElementById("triage-handoff-agent");
+    const handoffContainer = document.getElementById(
+      "triage-handoff-container",
+    );
+    const sendReplyCheckbox = document.getElementById("triage-send-reply-cb");
+    const noteInput = document.getElementById("triage-handoff-note");
+
+    const btnCancel = document.getElementById("btn-triage-cancel");
+    const btnConfirm = document.getElementById("btn-triage-confirm");
+
+    // Populate the Agent Dropdown
     if (agentSelect && State.contractors) {
       State.contractors.forEach((c) => {
         const opt = document.createElement("option");
@@ -6995,29 +7026,21 @@ function promptTriageAutoReply() {
       });
     }
 
-    const btnCancel = document.getElementById("btn-triage-cancel");
-    const btnNoText = document.getElementById("btn-triage-no-text");
-    const btnSend = document.getElementById("btn-triage-send");
-    const noteInput = document.getElementById("triage-handoff-note");
-
+    // 🚀 CONTRACTOR UI LOCKDOWN
     if (typeof isContractorUser === "function" && isContractorUser()) {
       if (btnCancel) btnCancel.style.display = "none";
-      if (btnNoText) btnNoText.style.display = "none";
-      if (btnSend) btnSend.textContent = "Send Auto-Reply & Verify";
-      if (agentSelect) agentSelect.parentElement.style.display = "none";
+      if (handoffContainer) handoffContainer.style.display = "none";
+      if (sendReplyCheckbox) {
+        sendReplyCheckbox.checked = true;
+        sendReplyCheckbox.disabled = true; // Force them to send the reply
+      }
     }
 
     const cleanup = () => {
       if (overlay) overlay.remove();
     };
 
-    // Helper to package the response data
-    const getPayload = (sendReply) => ({
-      sendReply: sendReply,
-      agent: agentSelect ? agentSelect.value : "",
-      note: noteInput ? noteInput.value.trim() : "",
-    });
-
+    // Abort sequence
     if (btnCancel) {
       btnCancel.onclick = () => {
         cleanup();
@@ -7025,17 +7048,16 @@ function promptTriageAutoReply() {
       };
     }
 
-    if (btnNoText) {
-      btnNoText.onclick = () => {
+    // Execute sequence (Extracts exactly what the admin configured)
+    if (btnConfirm) {
+      btnConfirm.onclick = () => {
+        const payload = {
+          sendReply: sendReplyCheckbox ? sendReplyCheckbox.checked : true,
+          agent: agentSelect ? agentSelect.value : "",
+          note: noteInput ? noteInput.value.trim() : "",
+        };
         cleanup();
-        resolve(getPayload(false));
-      };
-    }
-
-    if (btnSend) {
-      btnSend.onclick = () => {
-        cleanup();
-        resolve(getPayload(true));
+        resolve(payload);
       };
     }
   });

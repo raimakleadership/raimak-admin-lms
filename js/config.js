@@ -63,7 +63,7 @@ const Config = {
   soldStatus: "Sold",
 
   // Lead types
-  leadTypes: ["TDM"],
+  leadTypes: ["MLR", "TDM"],
 
   // Current products options — alphabetical
   currentProducts: [
