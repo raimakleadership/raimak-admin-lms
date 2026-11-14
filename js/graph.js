@@ -757,6 +757,14 @@ const Graph = (() => {
       SMSOptOut: f.SMSOptOut === true || f.SMSOptOut === "true",
       SMSLastContacted: f.SMSLastContacted || null,
       SMSUnread: f.SMSUnread === true || f.SMSUnread === "true",
+      // 🚀 NEW: Automation Tracking (Catches both naming conventions)
+      SMSContacted:
+        f.SMSContacted === true ||
+        f.SMSContacted === "true" ||
+        f.SMSContacted === "Yes" ||
+        f.SMS_x0020_Contacted === true ||
+        f.SMS_x0020_Contacted === "true" ||
+        f.SMS_x0020_Contacted === "Yes",
     };
   }
 
