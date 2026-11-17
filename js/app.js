@@ -1101,6 +1101,48 @@ function renderDashboard() {
             .getElementById("dash-recycle-section")
             .scrollIntoView({ behavior: "smooth" });
       }
+
+      // ==================================================
+      // 🚀 THE TT LEADS CAMPAIGN DASHBOARD INJECTOR
+      // ==================================================
+      const ttContainer = clone.getElementById("dash-tt-campaign-container");
+      if (ttContainer) {
+        const ttLeads = leads.filter((l) => l.leadType === "TT Leads");
+
+        if (ttLeads.length > 0) {
+          const soldLeads = ttLeads.filter((l) => l.status === "Sold").length;
+          const totalTT = ttLeads.length;
+          const conversionRate = ((soldLeads / totalTT) * 100).toFixed(1);
+
+          ttContainer.innerHTML = `
+            <div class="card" style="border-color: #F59E0B; margin-bottom: 24px;">
+              <div class="card-header" style="background: #FEF3C7; padding: 12px 20px;">
+                <h2 class="card-title" style="color: #92400E; font-size: 14px;">🛠️ CA Trouble List (TT Leads) Performance</h2>
+              </div>
+              <div style="padding: 16px 20px; display: flex; gap: 24px; align-items: center; flex-wrap: wrap;">
+                <div>
+                  <span style="font-size: 24px; font-weight: 800; color: #1E293B;">${soldLeads}</span>
+                  <span style="font-size: 13px; color: #64748B; margin-left: 4px;">Sales</span>
+                </div>
+                <div style="width: 1px; height: 30px; background: #E2E8F0;"></div>
+                <div>
+                  <span style="font-size: 24px; font-weight: 800; color: #1E293B;">${totalTT}</span>
+                  <span style="font-size: 13px; color: #64748B; margin-left: 4px;">Total Leads</span>
+                </div>
+                <div style="width: 1px; height: 30px; background: #E2E8F0;"></div>
+                <div>
+                  <span style="font-size: 24px; font-weight: 800; color: #059669;">${conversionRate}%</span>
+                  <span style="font-size: 13px; color: #64748B; margin-left: 4px;">Conversion Rate</span>
+                </div>
+                
+                <button class="btn-primary" style="margin-left: auto;" onclick="navigate('assign')">
+                  Manage TT Leads
+                </button>
+              </div>
+            </div>
+          `;
+        }
+      }
     }
 
     // 4. Inject Dynamic Lists
@@ -6011,9 +6053,6 @@ function getCSVField(row, candidates) {
   return "";
 }
 
-// ==========================================
-// 🚀 3. THE UPLOAD ENGINE (Verizon Version)
-// ==========================================
 async function uploadLeadsToSharePoint(csvData, leadType) {
   // ==========================================
   // 🛡️ 1. FLEXIBLE FIELD RESOLVER & CBR BOUNCER
@@ -6038,8 +6077,15 @@ async function uploadLeadsToSharePoint(csvData, leadType) {
   let duplicateCount = 0;
 
   csvData.forEach((row) => {
-    // 🚀 MERGED: Support old headers AND new header (CUSTOMERCONTACTPHONE)
+    // 🛑 TT CAMPAIGN SHIELD: Reject Pending Fiber Orders instantly
+    const pendingFiber = getCSVField(row, ["Pending fiber order"]);
+    if (pendingFiber && pendingFiber.toLowerCase() === "yes") {
+      return; // Skips this row entirely
+    }
+
+    // 🚀 MERGED: Prioritize Contact # for dialing, then fallback to CBR
     const cbrRaw = getCSVField(row, [
+      "Contact #",
       "CBR",
       "BTN",
       "Phone",
@@ -6061,7 +6107,7 @@ async function uploadLeadsToSharePoint(csvData, leadType) {
   if (totalLeads === 0) {
     if (typeof UI !== "undefined" && UI.showToast) {
       UI.showToast(
-        `❌ Upload aborted: All ${csvData.length} leads are duplicates or lack valid 10-digit CBRs.`,
+        `❌ Upload aborted: All ${csvData.length} leads are duplicates, lack valid 10-digit CBRs, or have pending orders.`,
         "error",
       );
     }
@@ -6070,7 +6116,7 @@ async function uploadLeadsToSharePoint(csvData, leadType) {
 
   if (typeof UI !== "undefined" && UI.showToast) {
     UI.showToast(
-      `🚀 Starting batch upload of ${totalLeads} leads... (Skipped ${duplicateCount} duplicate/invalid rows)`,
+      `🚀 Starting batch upload of ${totalLeads} leads... (Skipped ${csvData.length - totalLeads} invalid/duplicate/pending rows)`,
       "info",
     );
   }
@@ -6119,6 +6165,7 @@ async function uploadLeadsToSharePoint(csvData, leadType) {
         "CUSTOMERNAME",
         "Name",
         "Customer Name",
+        "Customer",
       ]);
 
       let first = getCSVField(row, ["First Name", "FirstName"]);
@@ -6141,7 +6188,11 @@ async function uploadLeadsToSharePoint(csvData, leadType) {
       const state = getCSVField(row, ["State", "STATE"]);
       const zip = getCSVField(row, ["Zip", "ZipCode", "ZIP"]);
       const btn = getCSVField(row, ["BTN", "Phone"]);
-      const cbr = getCSVField(row, ["CBR", "CUSTOMERCONTACTPHONE"]);
+      const cbr = getCSVField(row, [
+        "Contact #",
+        "CBR",
+        "CUSTOMERCONTACTPHONE",
+      ]);
 
       // 🧠 FRONTIER ACCOUNT HISTORY NOTE COMPILER
       const installDate = getCSVField(row, ["Install Date"]);
@@ -6168,6 +6219,26 @@ async function uploadLeadsToSharePoint(csvData, leadType) {
         compiledNote = `[Frontier Fiber Account] ${noteDetails.join(" | ")}`;
       }
 
+      // 🧠 TT CAMPAIGN NOTE COMPILER
+      let ttNotes = [];
+      const segment = getCSVField(row, ["Segment"]);
+      const billing = getCSVField(row, ["Billing current"]);
+      const age = getCSVField(row, ["Age (days)", "Aging bucket"]);
+      const wtn = getCSVField(row, ["WTN"]);
+      const ttRemark = getCSVField(row, ["Last remark"]);
+
+      if (segment) ttNotes.push(`Segment: ${segment}`);
+      if (billing) ttNotes.push(`Billing Current: ${billing}`);
+      if (age) ttNotes.push(`Ticket Age: ${age} days`);
+      if (wtn) ttNotes.push(`Down Line (WTN): ${wtn}`);
+      if (ttRemark) ttNotes.push(`Remark: ${ttRemark}`);
+
+      if (ttNotes.length > 0) {
+        // Prepends the TT data cleanly before any other standard notes
+        compiledNote =
+          `🚨 [TT LEAD INFO]\n${ttNotes.join(" | ")}\n\n${compiledNote}`.trim();
+      }
+
       return {
         id: String(index), // Map ID directly to chunk array index
         method: "POST",
@@ -6190,7 +6261,7 @@ async function uploadLeadsToSharePoint(csvData, leadType) {
             Notes: compiledNote,
             SMSOptOut: false, // 💬 explicitly initialize SMS compliance
             SMSUnread: false, // 💬 explicitly initialize SMS unread badge
-            SMSContacted: false,
+            SMSContacted: false, // 💬 The fix!
             LeadID: orderNum || "", // 🚀 Stores OrderNumber in custom LeadID column
           },
         },
@@ -6222,7 +6293,7 @@ async function uploadLeadsToSharePoint(csvData, leadType) {
             const errorMsg = res.body?.error?.message || "Unknown Graph Error";
             console.error(
               `❌ Row Rejection [Item #${res.id}]: "${errorMsg}"`,
-              `| Failed Lead: ${getCSVField(originalRow, ["First Name", "FirstName", "CUSTOMERNAME"])} (${getCSVField(originalRow, ["CBR", "BTN", "CUSTOMERCONTACTPHONE"])})`,
+              `| Failed Lead: ${getCSVField(originalRow, ["First Name", "FirstName", "CUSTOMERNAME", "Customer"])} (${getCSVField(originalRow, ["Contact #", "CBR", "BTN", "CUSTOMERCONTACTPHONE"])})`,
               res.body,
             );
             failCount++;

@@ -454,28 +454,15 @@
         </div>
         <button class="btn-primary admin-only" onclick="openAddLeadModal()">
           <svg width="14" height="14" fill="none" viewBox="0 0 24 24">
-            <line
-              x1="12"
-              y1="5"
-              x2="12"
-              y2="19"
-              stroke="currentColor"
-              stroke-width="2.5"
-              stroke-linecap="round"
-            />
-            <line
-              x1="5"
-              y1="12"
-              x2="19"
-              y2="12"
-              stroke="currentColor"
-              stroke-width="2.5"
-              stroke-linecap="round"
-            />
+            <line x1="12" y1="5" x2="12" y2="19" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+            <line x1="5" y1="12" x2="19" y2="12" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
           </svg>
           Add Lead
         </button>
       </div>
+
+      <!-- 🚀 THE NEW TT CAMPAIGN CONTAINER -->
+      <div id="dash-tt-campaign-container" class="admin-only"></div>
 
       <div class="kpi-grid">
         <div class="kpi-card kpi-primary">
@@ -486,9 +473,7 @@
         <div class="kpi-card kpi-success">
           <span class="kpi-label">Sold Today</span>
           <span class="kpi-value" id="kpi-sold-today">0</span>
-          <span class="kpi-sub" id="kpi-close-rate"
-            >0% all-time close rate</span
-          >
+          <span class="kpi-sub" id="kpi-close-rate">0% all-time close rate</span>
         </div>
         <div class="kpi-card admin-only" id="kpi-recycle-card">
           <span class="kpi-label">Needs Recycle</span>
@@ -534,15 +519,8 @@
         <div class="card-header recycle-header">
           <h2 class="card-title" id="dash-recycle-title">⚠️ Recycle Queue</h2>
           <div class="action-row">
-            <span class="card-meta"
-              >3rd Contact · 48hrs+ since last contact</span
-            >
-            <button
-              class="btn-primary btn-recycle-all"
-              onclick="recycleAllLeads()"
-            >
-              ♻️ Recycle All
-            </button>
+            <span class="card-meta">3rd Contact · 48hrs+ since last contact</span>
+            <button class="btn-primary btn-recycle-all" onclick="recycleAllLeads()">♻️ Recycle All</button>
           </div>
         </div>
         <div class="table-wrap" id="dash-recycle-table"></div>
