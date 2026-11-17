@@ -3483,7 +3483,9 @@ function renderAssignLeads() {
       }),
   );
 
-  // 🚀 AGENT READINESS LISTENER
+  // ==========================================
+  // 🚀 ACTION-BASED AGENT READINESS LISTENER (ADMIN CONTEXT AWARE)
+  // ==========================================
   const agentSelect = document.getElementById("bulk-agent-select");
   const readinessBadge = document.getElementById("agent-readiness-badge");
 
@@ -3496,19 +3498,55 @@ function renderAssignLeads() {
         return;
       }
 
+      // 1. Identify if the selected agent is an Admin
+      const targetContractor = (State.contractors || []).find(
+        (c) => c.name === selectedAgent,
+      );
+      const isAgentAdmin =
+        targetContractor &&
+        (targetContractor.role === "Admin" ||
+          targetContractor.role === "admin" ||
+          targetContractor.isAdmin === true);
+
+      // 2. Count leads requiring IMMEDIATE action
       const activeLeadsCount = State.leads.filter((lead) => {
         if (lead.assignedTo !== selectedAgent) return false;
         if (Config.terminalStatuses.includes(lead.status || "New"))
           return false;
-        if (Graph.isInCoolOff(lead)) return false;
 
+        // ACTION REQUIRED: Customer replied!
+        if (lead.SMSUnread === true || lead.smsUnread === true) return true;
+
+        // ACTION REQUIRED: Past-due callback
         if (lead.callbackAt) {
           const cbTime = new Date(lead.callbackAt).getTime();
           const nowTime = new Date().getTime();
-          if (cbTime > nowTime) {
-            return false;
-          }
+          if (cbTime <= nowTime) return true; // Past due!
+          return false; // Future callback, ignore for now.
         }
+
+        // 🚀 THE ADMIN WAITING ROOM:
+        // Only Admins get the "free pass" for contacted leads.
+        // Normal agents must actively work their assigned leads (calls, manual follow-up).
+        const isContacted =
+          lead.SMSContacted === true ||
+          lead.SMSContacted === "true" ||
+          lead.SMSContacted === "Yes" ||
+          lead.smsContacted === true;
+
+        if (isContacted && isAgentAdmin) {
+          return false; // Admin is waiting for a reply.
+        }
+
+        // COOL OFF SHIELD: If they are in manual call cool-off, ignore.
+        if (
+          typeof Graph !== "undefined" &&
+          Graph.isInCoolOff &&
+          Graph.isInCoolOff(lead)
+        )
+          return false;
+
+        // UNWORKED: Needs action!
         return true;
       }).length;
 
@@ -3519,7 +3557,7 @@ function renderAssignLeads() {
         readinessBadge.style.backgroundColor = "rgba(16, 185, 129, 0.15)";
         readinessBadge.style.color = "#059669";
       } else {
-        readinessBadge.textContent = `🔴 Not Ready (${activeLeadsCount} Active)`;
+        readinessBadge.textContent = `🔴 Action Required (${activeLeadsCount})`;
         readinessBadge.style.backgroundColor = "rgba(244, 63, 94, 0.15)";
         readinessBadge.style.color = "#E11D48";
       }
@@ -6152,6 +6190,7 @@ async function uploadLeadsToSharePoint(csvData, leadType) {
             Notes: compiledNote,
             SMSOptOut: false, // 💬 explicitly initialize SMS compliance
             SMSUnread: false, // 💬 explicitly initialize SMS unread badge
+            SMSContacted: false,
             LeadID: orderNum || "", // 🚀 Stores OrderNumber in custom LeadID column
           },
         },
