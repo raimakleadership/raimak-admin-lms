@@ -101,6 +101,7 @@ const Config = {
       "J.Scroggins@raimak.com",
       "antoinette.bickel@raimak.com",
       "a.cooper@raimak.com",
+      "c.milland@raimak.com",
     ],
   },
 
