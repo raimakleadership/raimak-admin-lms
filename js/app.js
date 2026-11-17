@@ -2899,8 +2899,16 @@ function updateCallbackUIForStatus(status) {
   btn.style.cursor = "pointer";
   dateInput.required = false;
 
+  // 🚀 NEW: Auto-open the calendar picker if it's a Pending Order
+  if (status === "Pending Order") {
+    wrap.style.width = "200px";
+    wrap.style.opacity = "1";
+    wrap.style.overflow = "visible";
+    label.textContent = "Install / Follow-up Date";
+    dateInput.required = true;
+  }
   // Check memory! If they didn't manually open it before, slide it shut.
-  if (wrap.dataset.manuallyOpened !== "true") {
+  else if (wrap.dataset.manuallyOpened !== "true") {
     wrap.style.width = "0px";
     wrap.style.opacity = "0";
     wrap.style.overflow = "hidden";
@@ -2910,6 +2918,7 @@ function updateCallbackUIForStatus(status) {
     }, 300);
   }
 }
+
 function stageStatus(leadId, newStatus) {
   const lead = State.leads.find(function (l) {
     return l.id === leadId;
