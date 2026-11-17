@@ -1964,15 +1964,21 @@ function renderMyLeads(tab = window._currentMyLeadsTab) {
   const tzHourCache = {};
 
   const baseLeads = State.leads.filter((l) => {
-    // 🚀 THE NEW VERIFIED GATE: Must be a Yes OR a manual follow-up
+    // 🚀 FIX: Must explicitly allow "New" leads through the gate so fresh uploads aren't dumped!
     const isManualFollowUp = [
+      "New",
       "1st Contact",
       "2nd Contact",
       "3rd Contact",
     ].includes(l.status);
 
-    // If it's not a VerifiedYes AND not a manual follow-up, dump it
-    if (!l.verifiedYes && l.status !== "Yes" && !isManualFollowUp) return false;
+    // 🚀 FIX: Safely extract the lead type regardless of how SharePoint formatted the JSON key
+    const typeStr = l.leadType || l.Lead_x0020_Type || l.LeadType || "";
+    const isTT = typeStr === "TT Leads";
+
+    // If it's not a VerifiedYes AND not a valid status AND not a TT Lead... dump it.
+    if (!l.verifiedYes && l.status !== "Yes" && !isManualFollowUp && !isTT)
+      return false;
 
     const assigned = (l.assignedTo || "")
       .toLowerCase()
@@ -2013,7 +2019,6 @@ function renderMyLeads(tab = window._currentMyLeadsTab) {
       }
     }
 
-    // 🚀 UNREAD OVERRIDE: If the customer texted us, they bypass ALL hiding rules!
     const hasUnread = l.SMSUnread === true || l.smsUnread === true;
 
     if (waitingForDate && !hasUnread) return false;
@@ -2039,7 +2044,6 @@ function renderMyLeads(tab = window._currentMyLeadsTab) {
       }
       const localHour = tzHourCache[tz];
 
-      // 🚀 UNREAD OVERRIDE: Allow unread messages to bypass the 8 PM - 8 AM curfew
       if (localHour < 8 || localHour >= 20) {
         if (!hasUnread) {
           hiddenByTimezone++;
@@ -2132,12 +2136,16 @@ function renderMyLeads(tab = window._currentMyLeadsTab) {
         ...buckets.followup,
       ];
 
-      const standardQueue = rawAgentQueue.filter(
-        (l) => l.leadType !== "TT Leads",
-      );
-      const ttLeadsQueue = rawAgentQueue.filter(
-        (l) => l.leadType === "TT Leads",
-      );
+      // 🚀 FIX: Safely read the SharePoint Type string for the split logic
+      const standardQueue = rawAgentQueue.filter((l) => {
+        const typeStr = l.leadType || l.Lead_x0020_Type || l.LeadType || "";
+        return typeStr !== "TT Leads";
+      });
+
+      const ttLeadsQueue = rawAgentQueue.filter((l) => {
+        const typeStr = l.leadType || l.Lead_x0020_Type || l.LeadType || "";
+        return typeStr === "TT Leads";
+      });
 
       standardQueueCount = standardQueue.length;
       ttQueueCount = ttLeadsQueue.length;
@@ -2166,6 +2174,11 @@ function renderMyLeads(tab = window._currentMyLeadsTab) {
   const template = document.getElementById("tmpl-my-leads");
   const clone = template.content.cloneNode(true);
 
+  // 🚀 SECURITY SWEEP: Rip out admin-only components (like the SMS console)
+  if (!userIsAdmin) {
+    clone.querySelectorAll(".admin-only").forEach((el) => el.remove());
+  }
+
   const contactsToday =
     typeof getMyContactsToday === "function" ? getMyContactsToday() : 0;
   const textEl = clone.getElementById("myleads-contact-text");
@@ -2177,11 +2190,10 @@ function renderMyLeads(tab = window._currentMyLeadsTab) {
   const tabContainer = clone.getElementById("tab-ml-new").parentNode;
 
   if (!userIsAdmin) {
-    // 🚀 NEW: Standard Agent Dual-Tab Injection
+    // 🚀 Standard Agent Dual-Tab Injection
     tabContainer.style.display = "flex";
-    tabContainer.innerHTML = ""; // Clear out the Admin HTML blueprint tabs
+    tabContainer.innerHTML = "";
 
-    // Create Standard Tab
     const tabStandard = document.createElement("div");
     tabStandard.id = "tab-ml-standard";
     tabStandard.onclick = () => renderMyLeads("standard");
@@ -2189,7 +2201,6 @@ function renderMyLeads(tab = window._currentMyLeadsTab) {
       "font-weight: 600; cursor: pointer; padding-bottom: 12px; transition: all 0.2s; border-bottom: 2px solid transparent; white-space: nowrap;";
     tabStandard.innerHTML = `Standard Queue <span id="badge-ml-standard" style="background: #e2e8f0; color: #475569; padding: 2px 8px; border-radius: 12px; font-size: 11px; margin-left: 6px;">0</span>`;
 
-    // Create TT Leads Tab
     const tabTT = document.createElement("div");
     tabTT.id = "tab-ml-tt";
     tabTT.onclick = () => renderMyLeads("tt_leads");
@@ -2200,18 +2211,16 @@ function renderMyLeads(tab = window._currentMyLeadsTab) {
     tabContainer.appendChild(tabStandard);
     tabContainer.appendChild(tabTT);
 
-    // Apply Active UI Styling
     if (tab === "tt_leads") {
       tabTT.style.color = "var(--text-1)";
-      tabTT.style.borderBottomColor = "#F59E0B"; // Bright Gold line
+      tabTT.style.borderBottomColor = "#F59E0B";
       tabStandard.style.color = "var(--text-2)";
     } else {
       tabStandard.style.color = "var(--text-1)";
-      tabStandard.style.borderBottomColor = "#38bdf8"; // Standard Blue line
+      tabStandard.style.borderBottomColor = "#38bdf8";
       tabTT.style.color = "var(--text-2)";
     }
 
-    // Populate Counters
     const updateBadge = (id, count) => {
       const b = clone.getElementById(id);
       if (b) {
@@ -2222,7 +2231,7 @@ function renderMyLeads(tab = window._currentMyLeadsTab) {
     updateBadge("badge-ml-standard", standardQueueCount);
     updateBadge("badge-ml-tt", ttQueueCount);
   } else {
-    // 🛠️ Admin Tab Logic (Untouched)
+    // 🛠️ Admin Tab Logic
     let noreplyTab = clone.getElementById("tab-ml-noreply");
     if (!noreplyTab) {
       noreplyTab = document.createElement("div");
@@ -2603,7 +2612,7 @@ function renderLeadFeedCard(myLeads) {
     });
   }
 
-  // THE DRAFT PEEK (Moved up to access product values)
+  // THE DRAFT PEEK
   const draft = State.drafts[lead.id] || {};
   const activeProducts =
     draft.currentProducts !== undefined
@@ -2720,37 +2729,80 @@ function renderLeadFeedCard(myLeads) {
       year: "2-digit",
     });
 
-  // THE RESTORED LEGACY NOTES PARSER
+  // ==========================================
+  // 🚀 THE NEW SMART MULTILINE PARSER
+  // ==========================================
   const pastNotesContainer = clone.getElementById("feed-past-notes-container");
   if (lead.notes && lead.notes.trim()) {
     pastNotesContainer.style.display = "block";
-    const notesHtml = lead.notes
-      .split("\n")
-      .filter((l) => l.trim())
-      .map((line) => {
-        const match = line.match(/^\[(\d{2}\/\d{2}(?:\/\d{2})?)(.*?)\]\s*(.*)/);
-        if (match) {
-          const date = match[1];
-          const agent = match[2] ? match[2].replace(/^\s*-\s*/, "") : "";
-          const text = match[3];
-          return `
-            <div style="margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid rgba(255,255,255,0.05)">
-              <div style="display:flex;gap:8px;align-items:center;margin-bottom:3px">
-                <span style="font-family:var(--font-mono);font-size:10px;color:var(--cyan);font-weight:700;background:var(--cyan-dim);padding:2px 6px;border-radius:4px">${date}</span>
-                ${agent ? `<span style="font-family:var(--font-mono);font-size:10px;color:var(--text-3)">${escHtml(agent)}</span>` : ""}
-              </div>
-              <span style="font-size:13px;color:var(--text-1)">${escHtml(text)}</span>
-            </div>`;
+
+    // 1. Split by line but DO NOT render immediately
+    const lines = lead.notes.split("\n").filter((l) => l.trim());
+    const groupedNotes = [];
+    let currentNote = null;
+
+    // 2. Group the lines together cleanly
+    lines.forEach((line) => {
+      const match = line.match(/^\[(\d{2}\/\d{2}(?:\/\d{2})?)(.*?)\]\s*(.*)/);
+
+      if (match) {
+        // We found a new stamp! Push the old note and start a new one.
+        if (currentNote) groupedNotes.push(currentNote);
+        const date = match[1];
+        const agent = match[2] ? match[2].replace(/^\s*-\s*/, "") : "";
+        currentNote = {
+          author: agent ? `${date} - ${agent}` : date,
+          textLines: [match[3]],
+        };
+      } else {
+        // No stamp found. Add this line to the existing bubble!
+        if (!currentNote) {
+          currentNote = {
+            author: "Legacy note — author unknown",
+            textLines: [],
+          };
         }
+        currentNote.textLines.push(line);
+      }
+    });
+
+    if (currentNote) groupedNotes.push(currentNote);
+
+    // 3. Render the grouped notes into HTML
+    const notesHtml = groupedNotes
+      .map((note) => {
+        const mergedText = note.textLines.join("\n");
+
         return `
-          <div style="margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid rgba(255,255,255,0.05)">
-            <div style="margin-bottom:3px">
-              <span style="font-family:var(--font-mono);font-size:10px;color:var(--text-3);background:var(--surface);padding:2px 6px;border-radius:4px">Legacy note — author unknown</span>
-            </div>
-            <span style="font-size:13px;color:var(--text-2)">${escHtml(line)}</span>
-          </div>`;
+        <div style="background: var(--surface-2, #1e293b); border: 1px solid var(--border, #334155); border-radius: 8px; padding: 12px 16px; margin-bottom: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.2);">
+          
+          <div style="display: inline-block; background: #0f172a; color: #38bdf8; font-family: var(--font-mono, monospace); font-size: 11px; font-weight: 700; text-transform: uppercase; padding: 4px 10px; border-radius: 4px; margin-bottom: 8px; border: 1px solid #1e293b; letter-spacing: 0.5px;">
+            ${escHtml(note.author)}
+          </div>
+
+          <div style="color: var(--text-1, #f8fafc); font-size: 14px; line-height: 1.6; white-space: pre-wrap; font-weight: 500;">
+            ${
+              escHtml(mergedText)
+                .replace(
+                  "🚨 TT LEAD INFO:",
+                  "<strong style='color: #F59E0B;'>🚨 TT LEAD INFO:</strong>",
+                )
+                .replace(
+                  "🚨 [TT LEAD INFO]",
+                  "<strong style='color: #F59E0B;'>🚨 [TT LEAD INFO]</strong>",
+                )
+                .replace(
+                  / \| /g,
+                  "  <strong style='color: #475569;'>•</strong>  ",
+                ) // Turns ugly CSV pipes into clean bullet points
+            }
+          </div>
+          
+        </div>
+      `;
       })
       .join("");
+
     pastNotesContainer.innerHTML = notesHtml;
   }
 
@@ -2762,7 +2814,7 @@ function renderLeadFeedCard(myLeads) {
     { id: "feed-btn", key: "btn" },
     { id: "feed-cbr", key: "cbr" },
     { id: "feed-mrc", key: "mrc" },
-    { id: "feed-products", key: "currentProducts" }, // 🚀 RESTORED
+    { id: "feed-products", key: "currentProducts" },
     { id: "feed-notes", key: "notes" },
     { id: "feed-sold-by", key: "soldBy" },
   ];

@@ -677,7 +677,8 @@
             </div>
           </div>
 
-          <div class="contacts-today-badge" id="myleads-contact-badge">
+          <!-- 🚀 HIDE SMS STATS FROM NON-ADMINS -->
+          <div class="contacts-today-badge admin-only" id="myleads-contact-badge">
             <style>
               .viz-card {
                 background: linear-gradient(145deg, #111827, #1e293b);
@@ -733,7 +734,6 @@
         </div>
       </div>
 
-      <!-- 🚀 NEW: The 4-Tier Navigation Tabs -->
       <div style="display: flex; gap: 24px; margin-top: 24px; margin-bottom: 24px; border-bottom: 1px solid var(--border); padding-bottom: 0; overflow-x: auto;">
         <div id="tab-ml-callbacks" onclick="renderMyLeads('callbacks')" style="color: var(--text-2); font-weight: 600; cursor: pointer; padding-bottom: 12px; transition: all 0.2s; border-bottom: 2px solid transparent; white-space: nowrap;">
           Callbacks <span id="badge-ml-callbacks" style="background: #ed1c24; color: #f8fafc; padding: 2px 8px; border-radius: 12px; font-size: 11px; margin-left: 6px;">0</span>
@@ -749,12 +749,11 @@
         </div>
       </div>
 
-      <!-- Active Lead Feed Card Mount -->
       <div id="lead-feed-wrap"></div>
 
-      <!-- 💬 LIVE SMS CONVERSATION CONSOLE -->
-      <div class="card" id="sms-console-card" style="margin-top: 20px; border: 1px solid var(--border-hi);">
-        <!-- SMS Header Bar -->
+      <!-- 💬 LIVE SMS CONVERSATION CONSOLE (NOW ADMIN ONLY) -->
+      <div class="card admin-only" id="sms-console-card" style="margin-top: 20px; border: 1px solid var(--border-hi);">
+        
         <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; background: #0c0c0e;">
           <div style="display:flex; align-items:center; gap:12px;">
             <div style="width: 10px; height: 10px; border-radius: 50%; background: #00e676; box-shadow: 0 0 8px #00e676;" id="sms-status-dot"></div>
@@ -780,10 +779,8 @@
           </div>
         </div>
 
-        <!-- 🚀 NEW: Dynamic Quick Reply Pill Templates -->
         <div id="sms-quick-reply-container" style="padding: 10px 20px; background: #121216; border-bottom: 1px solid var(--border); display: flex; gap: 8px; overflow-x: auto; align-items: center;">
           <span style="font-family: var(--font-mono, monospace); font-size: 10px; color: #64748b; text-transform: uppercase; white-space: nowrap; font-weight: 700;">Quick Replies:</span>
-          <!-- JavaScript will dynamically inject the templates from config.js here -->
         </div>
 
         <div style="padding: 16px 20px; background: #0c0c0e;">
@@ -817,7 +814,6 @@
         </div>
       </div>
 
-      <!-- Lead Queue & SMS Search Table -->
       <div style="margin-top: 20px">
         <div class="card">
           <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
@@ -825,7 +821,7 @@
               <h2 class="card-title">Lead Messaging Queue</h2>
               <span class="card-meta">Select any lead to load their Twilio conversation</span>
             </div>
-            <label style="display:flex; align-items:center; gap:6px; font-size:13px; font-weight:600; cursor:pointer; color:#0D1B3E; margin:0;">
+            <label style="display:flex; align-items:center; gap:6px; font-size:13px; font-weight:600; cursor:pointer; color:var(--text-1); margin:0;">
               <input type="checkbox" id="toggle-search-all" style="cursor:pointer; margin:0; width:14px; height:14px;" onchange="searchMyLeads(document.getElementById('my-leads-search').value)">
               Search All Agents
             </label>
