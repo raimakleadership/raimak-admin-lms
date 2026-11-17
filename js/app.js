@@ -1110,9 +1110,19 @@ function renderDashboard() {
         const ttLeads = leads.filter((l) => l.leadType === "TT Leads");
 
         if (ttLeads.length > 0) {
-          const soldLeads = ttLeads.filter((l) => l.status === "Sold").length;
           const totalTT = ttLeads.length;
+          const soldLeads = ttLeads.filter((l) => l.status === "Sold").length;
           const conversionRate = ((soldLeads / totalTT) * 100).toFixed(1);
+
+          // 🚀 CALCULATION: Reached out = Status changed from 'New' OR texted via Automation
+          const contactedLeads = ttLeads.filter(
+            (l) =>
+              (l.status && l.status !== "New") ||
+              l.SMSContacted === true ||
+              l.SMSContacted === "true" ||
+              l.SMSContacted === "Yes" ||
+              l.smsContacted === true,
+          ).length;
 
           ttContainer.innerHTML = `
             <div class="card" style="border-color: #F59E0B; margin-bottom: 24px;">
@@ -1121,23 +1131,24 @@ function renderDashboard() {
               </div>
               <div style="padding: 16px 20px; display: flex; gap: 24px; align-items: center; flex-wrap: wrap;">
                 <div>
-                  <span style="font-size: 24px; font-weight: 800; color: #1E293B;">${soldLeads}</span>
-                  <span style="font-size: 13px; color: #64748B; margin-left: 4px;">Sales</span>
+                  <span style="font-size: 24px; font-weight: 800; color: var(--text-1, #F8FAFC);">${totalTT}</span>
+                  <span style="font-size: 13px; color: var(--text-2, #94A3B8); margin-left: 4px;">Total Leads</span>
                 </div>
-                <div style="width: 1px; height: 30px; background: #E2E8F0;"></div>
+                <div style="width: 1px; height: 30px; background: var(--border, #334155);"></div>
                 <div>
-                  <span style="font-size: 24px; font-weight: 800; color: #1E293B;">${totalTT}</span>
-                  <span style="font-size: 13px; color: #64748B; margin-left: 4px;">Total Leads</span>
+                  <span style="font-size: 24px; font-weight: 800; color: var(--text-1, #F8FAFC);">${contactedLeads}</span>
+                  <span style="font-size: 13px; color: var(--text-2, #94A3B8); margin-left: 4px;">Contacted</span>
                 </div>
-                <div style="width: 1px; height: 30px; background: #E2E8F0;"></div>
+                <div style="width: 1px; height: 30px; background: var(--border, #334155);"></div>
                 <div>
-                  <span style="font-size: 24px; font-weight: 800; color: #059669;">${conversionRate}%</span>
-                  <span style="font-size: 13px; color: #64748B; margin-left: 4px;">Conversion Rate</span>
+                  <span style="font-size: 24px; font-weight: 800; color: var(--text-1, #F8FAFC);">${soldLeads}</span>
+                  <span style="font-size: 13px; color: var(--text-2, #94A3B8); margin-left: 4px;">Sales</span>
                 </div>
-                
-                <button class="btn-primary" style="margin-left: auto;" onclick="navigate('assign')">
-                  Manage TT Leads
-                </button>
+                <div style="width: 1px; height: 30px; background: var(--border, #334155);"></div>
+                <div>
+                  <span style="font-size: 24px; font-weight: 800; color: #10B981;">${conversionRate}%</span>
+                  <span style="font-size: 13px; color: var(--text-2, #94A3B8); margin-left: 4px;">Conversion Rate</span>
+                </div>
               </div>
             </div>
           `;
@@ -2079,16 +2090,16 @@ function renderMyLeads(tab = window._currentMyLeadsTab) {
   buckets.callbacks.sort(
     (a, b) => new Date(a.callbackAt) - new Date(b.callbackAt),
   );
-  buckets.followup.sort((a, b) => {
-    const aTime = a.lastContacted ? new Date(a.lastContacted).getTime() : 0;
-    const bTime = b.lastContacted ? new Date(b.lastContacted).getTime() : 0;
-    return aTime - bTime;
-  });
-  buckets.noreply.sort((a, b) => {
-    const aTime = a.lastContacted ? new Date(a.lastContacted).getTime() : 0;
-    const bTime = b.lastContacted ? new Date(b.lastContacted).getTime() : 0;
-    return aTime - bTime;
-  });
+  buckets.followup.sort(
+    (a, b) =>
+      (a.lastContacted ? new Date(a.lastContacted).getTime() : 0) -
+      (b.lastContacted ? new Date(b.lastContacted).getTime() : 0),
+  );
+  buckets.noreply.sort(
+    (a, b) =>
+      (a.lastContacted ? new Date(a.lastContacted).getTime() : 0) -
+      (b.lastContacted ? new Date(b.lastContacted).getTime() : 0),
+  );
   buckets.yes.sort((a, b) => a.id.localeCompare(b.id));
   buckets.new.sort((a, b) => a.id.localeCompare(b.id));
 
@@ -2096,9 +2107,11 @@ function renderMyLeads(tab = window._currentMyLeadsTab) {
   // 🛑 3. UNIFIED AGENT QUEUE OR ADMIN TABS
   // ==========================================
   let myLeads;
+  let standardQueueCount = 0;
+  let ttQueueCount = 0;
 
   if (window._forceShowLead && window._myLeads && window._myLeads.length > 0) {
-    myLeads = window._myLeads; // Keep the injected search lead intact!
+    myLeads = window._myLeads;
   } else {
     if (userIsAdmin) {
       if (!tab) {
@@ -2111,14 +2124,34 @@ function renderMyLeads(tab = window._currentMyLeadsTab) {
       window._currentMyLeadsTab = tab;
       myLeads = buckets[tab] || [];
     } else {
-      // 🚀 Standard Agent: Priority Queue (New leads first, noreply removed)
-      myLeads = [
+      // 🚀 Standard Agent: Calculate the split between TT and Standard
+      const rawAgentQueue = [
         ...buckets.new,
         ...buckets.callbacks,
         ...buckets.yes,
         ...buckets.followup,
       ];
-      window._currentMyLeadsTab = "all";
+
+      const standardQueue = rawAgentQueue.filter(
+        (l) => l.leadType !== "TT Leads",
+      );
+      const ttLeadsQueue = rawAgentQueue.filter(
+        (l) => l.leadType === "TT Leads",
+      );
+
+      standardQueueCount = standardQueue.length;
+      ttQueueCount = ttLeadsQueue.length;
+
+      // Default to standard queue if no tab is provided
+      if (!tab || tab === "all") tab = "standard";
+
+      window._currentMyLeadsTab = tab;
+
+      if (tab === "tt_leads") {
+        myLeads = ttLeadsQueue;
+      } else {
+        myLeads = standardQueue;
+      }
     }
     window._myLeads = myLeads;
   }
@@ -2144,10 +2177,52 @@ function renderMyLeads(tab = window._currentMyLeadsTab) {
   const tabContainer = clone.getElementById("tab-ml-new").parentNode;
 
   if (!userIsAdmin) {
-    // Hide the tabs container entirely for non-admins
-    tabContainer.style.display = "none";
+    // 🚀 NEW: Standard Agent Dual-Tab Injection
+    tabContainer.style.display = "flex";
+    tabContainer.innerHTML = ""; // Clear out the Admin HTML blueprint tabs
+
+    // Create Standard Tab
+    const tabStandard = document.createElement("div");
+    tabStandard.id = "tab-ml-standard";
+    tabStandard.onclick = () => renderMyLeads("standard");
+    tabStandard.style.cssText =
+      "font-weight: 600; cursor: pointer; padding-bottom: 12px; transition: all 0.2s; border-bottom: 2px solid transparent; white-space: nowrap;";
+    tabStandard.innerHTML = `Standard Queue <span id="badge-ml-standard" style="background: #e2e8f0; color: #475569; padding: 2px 8px; border-radius: 12px; font-size: 11px; margin-left: 6px;">0</span>`;
+
+    // Create TT Leads Tab
+    const tabTT = document.createElement("div");
+    tabTT.id = "tab-ml-tt";
+    tabTT.onclick = () => renderMyLeads("tt_leads");
+    tabTT.style.cssText =
+      "font-weight: 600; cursor: pointer; padding-bottom: 12px; transition: all 0.2s; border-bottom: 2px solid transparent; white-space: nowrap;";
+    tabTT.innerHTML = `CA Trouble List <span id="badge-ml-tt" style="background: #FEF3C7; color: #92400E; padding: 2px 8px; border-radius: 12px; font-size: 11px; margin-left: 6px;">0</span>`;
+
+    tabContainer.appendChild(tabStandard);
+    tabContainer.appendChild(tabTT);
+
+    // Apply Active UI Styling
+    if (tab === "tt_leads") {
+      tabTT.style.color = "var(--text-1)";
+      tabTT.style.borderBottomColor = "#F59E0B"; // Bright Gold line
+      tabStandard.style.color = "var(--text-2)";
+    } else {
+      tabStandard.style.color = "var(--text-1)";
+      tabStandard.style.borderBottomColor = "#38bdf8"; // Standard Blue line
+      tabTT.style.color = "var(--text-2)";
+    }
+
+    // Populate Counters
+    const updateBadge = (id, count) => {
+      const b = clone.getElementById(id);
+      if (b) {
+        b.textContent = count;
+        b.style.opacity = count > 0 ? "1" : "0.3";
+      }
+    };
+    updateBadge("badge-ml-standard", standardQueueCount);
+    updateBadge("badge-ml-tt", ttQueueCount);
   } else {
-    // Admin Tab Logic
+    // 🛠️ Admin Tab Logic (Untouched)
     let noreplyTab = clone.getElementById("tab-ml-noreply");
     if (!noreplyTab) {
       noreplyTab = document.createElement("div");
@@ -2204,10 +2279,13 @@ function renderMyLeads(tab = window._currentMyLeadsTab) {
     _currentFeedIndex = 0;
     if (window._clockTimer) clearInterval(window._clockTimer);
 
-    if (subtitleEl)
-      subtitleEl.textContent = userIsAdmin
-        ? `// 0 remaining in this tab`
-        : `// 0 leads remaining in queue`;
+    if (subtitleEl) {
+      if (userIsAdmin) {
+        subtitleEl.textContent = `// 0 remaining in this tab`;
+      } else {
+        subtitleEl.textContent = `// 0 leads remaining in ${tab === "tt_leads" ? "CA Trouble List" : "Standard Queue"}`;
+      }
+    }
 
     if (feedWrap) {
       const sleepingBannerHTML =
@@ -4874,7 +4952,7 @@ function renderLeads() {
           <p style="margin:0; font-size:13px; color:#666;">What type of leads are in this file?</p>
         </div>
         <select id="tempLeadType" class="filter-select" style="width:100%; padding:10px; border-radius:6px;">
-          <option value="Contractor">Contractor Leads</option>
+          <option value="TT Leads">TT Leads</option>
           <option value="MLR">MLR Leads</option>
         </select>
         <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:8px;">
@@ -7181,7 +7259,7 @@ async function confirmTriageStatus(event, leadId, bucketStatus) {
   let handoffAgent = "";
   let handoffNote = "";
   const replyText =
-    "Fantastic, a Verizon Specialist will give you a call shortly!";
+    "Fantastic, a dedicated fiber specialist will give you a call shortly!";
 
   // 1. THE MODAL INTERCEPTOR
   if (bucketStatus === "Yes" || bucketStatus === "Pending Order") {
