@@ -1886,6 +1886,7 @@ function getStatusDot(status) {
   return `<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${color};box-shadow:0 0 6px ${color};flex-shrink:0;margin-right:6px"></span>`;
 }
 
+
 let _leadSaved = false;
 let _currentFeedIndex = 0;
 window._currentMyLeadsTab = window._currentMyLeadsTab || null;
@@ -1964,19 +1965,17 @@ function renderMyLeads(tab = window._currentMyLeadsTab) {
   const tzHourCache = {};
 
   const baseLeads = State.leads.filter((l) => {
-    // 🚀 FIX: Must explicitly allow "New" leads through the gate so fresh uploads aren't dumped!
     const isManualFollowUp = [
       "New",
       "1st Contact",
       "2nd Contact",
       "3rd Contact",
+      "Pending Order"
     ].includes(l.status);
 
-    // 🚀 FIX: Safely extract the lead type regardless of how SharePoint formatted the JSON key
     const typeStr = l.leadType || l.Lead_x0020_Type || l.LeadType || "";
     const isTT = typeStr === "TT Leads";
 
-    // If it's not a VerifiedYes AND not a valid status AND not a TT Lead... dump it.
     if (!l.verifiedYes && l.status !== "Yes" && !isManualFollowUp && !isTT)
       return false;
 
@@ -2069,18 +2068,24 @@ function renderMyLeads(tab = window._currentMyLeadsTab) {
   const fiveMinsFromNow = Date.now() + 5 * 60000;
 
   baseLeads.forEach((l) => {
-    const isCallbackDue =
-      l.callbackAt && new Date(l.callbackAt).getTime() <= fiveMinsFromNow;
-
-    const isUnread = l.SMSUnread || l.smsUnread;
-    const isFresh = l.status === "Yes" || l.status === "New";
-    const isNoReply =
-      ["1st Contact", "2nd Contact", "3rd Contact"].includes(l.status) &&
-      !l.verifiedYes;
+    const isCallbackDue = l.callbackAt && new Date(l.callbackAt).getTime() <= fiveMinsFromNow;
+    const isUnread = l.SMSUnread === true || l.smsUnread === true;
+    const isSmsContacted = l.SMSContacted === true || l.smsContacted === true || l.SMSContacted === "Yes" || l.SMSContacted === "true";
+    
+    const isYes = l.status === "Yes";
+    
+    // 🚀 FIX 1: A lead is only "Fresh/New" if it is actually New AND hasn't been mass-texted yet.
+    const isFresh = l.status === "New" && !isSmsContacted;
+    
+    // 🚀 FIX 2: Texted leads with no reply route directly to "No Reply"
+    const isNoReply = (
+      (["1st Contact", "2nd Contact", "3rd Contact"].includes(l.status) && !l.verifiedYes) ||
+      (l.status === "New" && isSmsContacted)
+    );
 
     if (isCallbackDue) {
       buckets.callbacks.push(l);
-    } else if (isUnread) {
+    } else if (isUnread || isYes) { // 🚀 FIX 3: Push "Yes" statuses into the actual "Unread & YES" tab!
       buckets.yes.push(l);
     } else if (isFresh) {
       buckets.new.push(l);
@@ -2128,7 +2133,6 @@ function renderMyLeads(tab = window._currentMyLeadsTab) {
       window._currentMyLeadsTab = tab;
       myLeads = buckets[tab] || [];
     } else {
-      // 🚀 Standard Agent: Calculate the split between TT and Standard
       const rawAgentQueue = [
         ...buckets.new,
         ...buckets.callbacks,
@@ -2136,7 +2140,6 @@ function renderMyLeads(tab = window._currentMyLeadsTab) {
         ...buckets.followup,
       ];
 
-      // 🚀 FIX: Safely read the SharePoint Type string for the split logic
       const standardQueue = rawAgentQueue.filter((l) => {
         const typeStr = l.leadType || l.Lead_x0020_Type || l.LeadType || "";
         return typeStr !== "TT Leads";
@@ -2150,9 +2153,7 @@ function renderMyLeads(tab = window._currentMyLeadsTab) {
       standardQueueCount = standardQueue.length;
       ttQueueCount = ttLeadsQueue.length;
 
-      // Default to standard queue if no tab is provided
       if (!tab || tab === "all") tab = "standard";
-
       window._currentMyLeadsTab = tab;
 
       if (tab === "tt_leads") {
@@ -2174,7 +2175,6 @@ function renderMyLeads(tab = window._currentMyLeadsTab) {
   const template = document.getElementById("tmpl-my-leads");
   const clone = template.content.cloneNode(true);
 
-  // 🚀 SECURITY SWEEP: Rip out admin-only components (like the SMS console)
   if (!userIsAdmin) {
     clone.querySelectorAll(".admin-only").forEach((el) => el.remove());
   }
@@ -2190,7 +2190,6 @@ function renderMyLeads(tab = window._currentMyLeadsTab) {
   const tabContainer = clone.getElementById("tab-ml-new").parentNode;
 
   if (!userIsAdmin) {
-    // 🚀 Standard Agent Dual-Tab Injection
     tabContainer.style.display = "flex";
     tabContainer.innerHTML = "";
 
@@ -2231,7 +2230,6 @@ function renderMyLeads(tab = window._currentMyLeadsTab) {
     updateBadge("badge-ml-standard", standardQueueCount);
     updateBadge("badge-ml-tt", ttQueueCount);
   } else {
-    // 🛠️ Admin Tab Logic
     let noreplyTab = clone.getElementById("tab-ml-noreply");
     if (!noreplyTab) {
       noreplyTab = document.createElement("div");
