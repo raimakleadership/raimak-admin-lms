@@ -1891,10 +1891,16 @@ let _currentFeedIndex = 0;
 window._currentMyLeadsTab = window._currentMyLeadsTab || null;
 
 function renderMyLeads(tab = window._currentMyLeadsTab) {
-  if (isContractorUser()) {
-    UI.showToast("Access Restricted: Routing to Triage Inbox", "error");
-    return switchView("triage");
+  // 🚀 THE ULTIMATE CONTRACTOR BOUNCER
+  if (typeof isContractorUser === "function" && isContractorUser()) {
+    if (typeof UI !== "undefined" && UI.showToast) {
+      UI.showToast("Access Restricted: Routing to Triage Inbox", "error");
+    }
+    if (typeof switchView === "function") return switchView("triage");
+    return;
   }
+
+  const userIsAdmin = typeof isAdmin === "function" && isAdmin();
 
   if (typeof _leadSaved === "undefined") window._leadSaved = false;
 
@@ -1912,8 +1918,13 @@ function renderMyLeads(tab = window._currentMyLeadsTab) {
         : null;
 
     let tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    if (leadState && stateTimezones[leadState]) tz = stateTimezones[leadState];
-
+    if (
+      leadState &&
+      typeof stateTimezones !== "undefined" &&
+      stateTimezones[leadState]
+    ) {
+      tz = stateTimezones[leadState];
+    }
     try {
       clockEl.textContent = new Date().toLocaleTimeString([], {
         hour: "2-digit",
@@ -1945,21 +1956,31 @@ function renderMyLeads(tab = window._currentMyLeadsTab) {
     ? contractor.name.toLowerCase().trim()
     : userName;
 
+  // ==========================================
+  // 🛑 1. BASE FILTER
+  // ==========================================
   let hiddenByTimezone = 0;
   const filterNow = new Date();
   const tzHourCache = {};
 
   const baseLeads = State.leads.filter((l) => {
-    const currentStatus = l.status || "New";
-    const validQueueStatuses = [
+    const isManualFollowUp = [
       "New",
-      "Yes",
       "1st Contact",
       "2nd Contact",
       "3rd Contact",
-    ];
+      "Pending Order",
+    ].includes(l.status);
 
-    if (!l.verifiedYes && !validQueueStatuses.includes(currentStatus))
+    const typeStr = (
+      l.leadType ||
+      l.Lead_x0020_Type ||
+      l.LeadType ||
+      ""
+    ).trim();
+    const isTT = typeStr === "TT Leads";
+
+    if (!l.verifiedYes && l.status !== "Yes" && !isManualFollowUp && !isTT)
       return false;
 
     const assigned = (l.assignedTo || "")
@@ -1975,6 +1996,7 @@ function renderMyLeads(tab = window._currentMyLeadsTab) {
     if (!matchesAgent) return false;
     if (Config.terminalStatuses && Config.terminalStatuses.includes(l.status))
       return false;
+
     if (
       window._skippedSessionLeads &&
       window._skippedSessionLeads.includes(l.id)
@@ -1994,8 +2016,11 @@ function renderMyLeads(tab = window._currentMyLeadsTab) {
     if (l.callbackAt) {
       const scheduledTime = new Date(l.callbackAt).getTime();
       const dueThreshold = filterNow.getTime() + 5 * 60000;
-      if (scheduledTime > dueThreshold) waitingForDate = true;
-      else isDueCallback = true;
+      if (scheduledTime > dueThreshold) {
+        waitingForDate = true;
+      } else {
+        isDueCallback = true;
+      }
     }
 
     const hasUnread = l.SMSUnread === true || l.smsUnread === true;
@@ -2005,8 +2030,8 @@ function renderMyLeads(tab = window._currentMyLeadsTab) {
 
     if (l.state) {
       let tz = "America/New_York";
-      if (stateTimezones[l.state]) tz = stateTimezones[l.state];
-
+      if (typeof stateTimezones !== "undefined" && stateTimezones[l.state])
+        tz = stateTimezones[l.state];
       if (tzHourCache[tz] === undefined) {
         try {
           tzHourCache[tz] = parseInt(
@@ -2022,6 +2047,7 @@ function renderMyLeads(tab = window._currentMyLeadsTab) {
         }
       }
       const localHour = tzHourCache[tz];
+
       if (localHour < 8 || localHour >= 20) {
         if (!hasUnread) {
           hiddenByTimezone++;
@@ -2029,71 +2055,130 @@ function renderMyLeads(tab = window._currentMyLeadsTab) {
         }
       }
     }
+
     return true;
   });
 
-  const buckets = { callbacks: [], yes: [], followup: [], new: [] };
+  // ==========================================
+  // 🛑 2. BUCKET THE LEADS
+  // ==========================================
+  const buckets = {
+    callbacks: [],
+    yes: [],
+    followup: [],
+    noreply: [],
+    new: [],
+  };
+
   const fiveMinsFromNow = Date.now() + 5 * 60000;
 
   baseLeads.forEach((l) => {
     const isCallbackDue =
       l.callbackAt && new Date(l.callbackAt).getTime() <= fiveMinsFromNow;
-    const isUnread = l.SMSUnread || l.smsUnread;
-    const isFresh = l.status === "Yes" || l.status === "New";
+    const isUnread = l.SMSUnread === true || l.smsUnread === true;
+    const isSmsContacted =
+      l.SMSContacted === true ||
+      l.smsContacted === true ||
+      l.SMSContacted === "Yes" ||
+      l.SMSContacted === "true";
 
-    if (isCallbackDue) buckets.callbacks.push(l);
-    else if (isUnread) buckets.yes.push(l);
-    else if (isFresh) buckets.new.push(l);
-    else buckets.followup.push(l);
+    const isYes = l.status === "Yes";
+    const isFresh = l.status === "New" && !isSmsContacted;
+    const isNoReply =
+      (["1st Contact", "2nd Contact", "3rd Contact"].includes(l.status) &&
+        !l.verifiedYes) ||
+      (l.status === "New" && isSmsContacted);
+
+    if (isCallbackDue) {
+      buckets.callbacks.push(l);
+    } else if (isUnread || isYes) {
+      buckets.yes.push(l);
+    } else if (isFresh) {
+      buckets.new.push(l);
+    } else if (isNoReply) {
+      buckets.noreply.push(l);
+    } else {
+      buckets.followup.push(l);
+    }
   });
 
   buckets.callbacks.sort(
     (a, b) => new Date(a.callbackAt) - new Date(b.callbackAt),
   );
-  buckets.followup.sort((a, b) => {
-    const aTime = a.lastContacted ? new Date(a.lastContacted).getTime() : 0;
-    const bTime = b.lastContacted ? new Date(b.lastContacted).getTime() : 0;
-    return aTime - bTime;
-  });
+  buckets.followup.sort(
+    (a, b) =>
+      (a.lastContacted ? new Date(a.lastContacted).getTime() : 0) -
+      (b.lastContacted ? new Date(b.lastContacted).getTime() : 0),
+  );
+  buckets.noreply.sort(
+    (a, b) =>
+      (a.lastContacted ? new Date(a.lastContacted).getTime() : 0) -
+      (b.lastContacted ? new Date(b.lastContacted).getTime() : 0),
+  );
   buckets.yes.sort((a, b) => a.id.localeCompare(b.id));
   buckets.new.sort((a, b) => a.id.localeCompare(b.id));
 
-  let myLeads = [];
-  const adminView = isAdmin();
+  // ==========================================
+  // 🛑 3. AGENT DUAL-QUEUE OR ADMIN 5-TAB QUEUE
+  // ==========================================
+  const rawAgentQueue = [
+    ...buckets.new,
+    ...buckets.callbacks,
+    ...buckets.yes,
+    ...buckets.followup,
+  ];
+
+  const standardQueue = rawAgentQueue.filter((l) => {
+    const typeStr = (
+      l.leadType ||
+      l.Lead_x0020_Type ||
+      l.LeadType ||
+      ""
+    ).trim();
+    return typeStr !== "TT Leads";
+  });
+
+  const ttLeadsQueue = rawAgentQueue.filter((l) => {
+    const typeStr = (
+      l.leadType ||
+      l.Lead_x0020_Type ||
+      l.LeadType ||
+      ""
+    ).trim();
+    return typeStr === "TT Leads";
+  });
+
+  const standardQueueCount = standardQueue.length;
+  const ttQueueCount = ttLeadsQueue.length;
+
+  let myLeads;
 
   if (window._forceShowLead && window._myLeads && window._myLeads.length > 0) {
     myLeads = window._myLeads;
-  } else if (adminView) {
-    // 👑 ADMIN 4-TAB RESOLUTION
-    if (
-      !tab ||
-      tab === "noreply" ||
-      !["callbacks", "yes", "followup", "new"].includes(tab)
-    ) {
-      if (buckets.callbacks.length > 0) tab = "callbacks";
-      else if (buckets.yes.length > 0) tab = "yes";
-      else if (buckets.followup.length > 0) tab = "followup";
-      else tab = "new";
-    }
-    window._currentMyLeadsTab = tab;
-    myLeads = buckets[tab] || [];
   } else {
-    // 🚀 AGENT 2-TAB RESOLUTION (Smart Auto-Routing)
-    if (!tab || tab === "noreply" || !["queue", "replies"].includes(tab)) {
-      if (buckets.yes.length > 0)
-        tab = "replies"; // Force to replies if they have unread messages!
-      else tab = "queue";
-    }
-    window._currentMyLeadsTab = tab;
-
-    if (tab === "replies") {
-      myLeads = buckets.yes;
+    if (userIsAdmin) {
+      if (
+        !tab ||
+        !["callbacks", "yes", "followup", "noreply", "new"].includes(tab)
+      ) {
+        if (buckets.callbacks.length > 0) tab = "callbacks";
+        else if (buckets.yes.length > 0) tab = "yes";
+        else if (buckets.followup.length > 0) tab = "followup";
+        else if (buckets.noreply.length > 0) tab = "noreply";
+        else tab = "new";
+      }
+      window._currentMyLeadsTab = tab;
+      myLeads = buckets[tab] || [];
     } else {
-      myLeads = [...buckets.callbacks, ...buckets.followup, ...buckets.new];
+      if (!tab || !["standard", "tt_leads"].includes(tab)) {
+        tab = "standard";
+      }
+      window._currentMyLeadsTab = tab;
+      myLeads = tab === "tt_leads" ? ttLeadsQueue : standardQueue;
     }
+    window._myLeads = myLeads;
   }
 
-  window._myLeads = myLeads;
   window._agentName = agentName;
   _leadSaved = false;
   window._forceShowLead = false;
@@ -2104,101 +2189,118 @@ function renderMyLeads(tab = window._currentMyLeadsTab) {
   const template = document.getElementById("tmpl-my-leads");
   const clone = template.content.cloneNode(true);
 
-  const contactsToday = getMyContactsToday();
+  // 🔒 SECURITY SWEEP: Strip SMS console, Texts Today badge, and admin-only UI for non-admins
+  if (!userIsAdmin) {
+    clone.querySelectorAll(".admin-only").forEach((el) => el.remove());
+    const smsCard = clone.getElementById("sms-console-card");
+    if (smsCard) smsCard.remove();
+    const smsBadge = clone.getElementById("myleads-contact-badge");
+    if (smsBadge) smsBadge.remove();
+  }
+
+  const contactsToday =
+    typeof getMyContactsToday === "function" ? getMyContactsToday() : 0;
   const textEl = clone.getElementById("myleads-contact-text");
   if (textEl) textEl.textContent = contactsToday;
 
-  if (!adminView) {
-    // ==========================================
-    // 🚀 SMART 2-TAB AGENT UI BUILDER
-    // ==========================================
-    const tabCallbacks = clone.getElementById("tab-ml-callbacks");
-    const tabFollowup = clone.getElementById("tab-ml-followup");
-    const tabYes = clone.getElementById("tab-ml-yes"); // Repurposed for "New Replies"
-    const tabNew = clone.getElementById("tab-ml-new"); // Repurposed for "My Queue"
+  // ==========================================
+  // 🚀 4. STYLE THE TABS & POPULATE BADGES
+  // ==========================================
+  const newTabAnchor = clone.getElementById("tab-ml-new");
+  const tabContainer = newTabAnchor ? newTabAnchor.parentNode : null;
 
-    if (tabCallbacks) tabCallbacks.style.display = "none";
-    if (tabFollowup) tabFollowup.style.display = "none";
+  if (tabContainer) {
+    if (!userIsAdmin) {
+      tabContainer.style.display = "flex";
+      tabContainer.innerHTML = "";
 
-    const queueCount =
-      buckets.callbacks.length + buckets.followup.length + buckets.new.length;
-    const repliesCount = buckets.yes.length;
+      const tabStandard = document.createElement("div");
+      tabStandard.id = "tab-ml-standard";
+      tabStandard.onclick = () => renderMyLeads("standard");
+      tabStandard.style.cssText =
+        "font-weight: 600; cursor: pointer; padding-bottom: 12px; transition: all 0.2s; border-bottom: 2px solid transparent; white-space: nowrap;";
+      tabStandard.innerHTML = `Standard Queue <span id="badge-ml-standard" style="background: #e2e8f0; color: #475569; padding: 2px 8px; border-radius: 12px; font-size: 11px; margin-left: 6px;">0</span>`;
 
-    if (tabNew) {
-      tabNew.setAttribute("onclick", "renderMyLeads('queue')");
-      tabNew.innerHTML = `My Queue <span style="background: var(--surface-2); color: var(--text-1); padding: 2px 8px; border-radius: 12px; font-size: 11px; margin-left: 6px; border: 1px solid var(--border); opacity: ${queueCount > 0 ? "1" : "0.3"}">${queueCount}</span>`;
+      const tabTT = document.createElement("div");
+      tabTT.id = "tab-ml-tt";
+      tabTT.onclick = () => renderMyLeads("tt_leads");
+      tabTT.style.cssText =
+        "font-weight: 600; cursor: pointer; padding-bottom: 12px; transition: all 0.2s; border-bottom: 2px solid transparent; white-space: nowrap;";
+      tabTT.innerHTML = `CA Trouble List <span id="badge-ml-tt" style="background: #FEF3C7; color: #92400E; padding: 2px 8px; border-radius: 12px; font-size: 11px; margin-left: 6px;">0</span>`;
+
+      tabContainer.appendChild(tabStandard);
+      tabContainer.appendChild(tabTT);
+
+      if (tab === "tt_leads") {
+        tabTT.style.color = "var(--text-1)";
+        tabTT.style.borderBottomColor = "#F59E0B";
+        tabStandard.style.color = "var(--text-2)";
+      } else {
+        tabStandard.style.color = "var(--text-1)";
+        tabStandard.style.borderBottomColor = "#38bdf8";
+        tabTT.style.color = "var(--text-2)";
+      }
+
+      const updateBadge = (id, count) => {
+        const b = clone.getElementById(id);
+        if (b) {
+          b.textContent = count;
+          b.style.opacity = count > 0 ? "1" : "0.3";
+        }
+      };
+      updateBadge("badge-ml-standard", standardQueueCount);
+      updateBadge("badge-ml-tt", ttQueueCount);
+    } else {
+      let noreplyTab = clone.getElementById("tab-ml-noreply");
+      if (!noreplyTab) {
+        noreplyTab = document.createElement("div");
+        noreplyTab.id = "tab-ml-noreply";
+        noreplyTab.onclick = () => renderMyLeads("noreply");
+        noreplyTab.style.cssText =
+          "color: var(--text-2); font-weight: 600; cursor: pointer; padding-bottom: 12px; transition: all 0.2s; border-bottom: 2px solid transparent; white-space: nowrap;";
+        noreplyTab.innerHTML = `No Reply <span id="badge-ml-noreply" style="background: #e2e8f0; color: #475569; padding: 2px 8px; border-radius: 12px; font-size: 11px; margin-left: 6px;">0</span>`;
+        tabContainer.insertBefore(noreplyTab, newTabAnchor);
+      }
+
+      const tabsUI = {
+        callbacks: clone.getElementById("tab-ml-callbacks"),
+        yes: clone.getElementById("tab-ml-yes"),
+        followup: clone.getElementById("tab-ml-followup"),
+        noreply: clone.getElementById("tab-ml-noreply"),
+        new: clone.getElementById("tab-ml-new"),
+      };
+
+      Object.keys(tabsUI).forEach((key) => {
+        if (tabsUI[key]) {
+          if (key === tab) {
+            tabsUI[key].style.color = "var(--text-1)";
+            tabsUI[key].style.borderBottomColor = "#38bdf8";
+          } else {
+            tabsUI[key].style.color = "var(--text-2)";
+            tabsUI[key].style.borderBottomColor = "transparent";
+          }
+        }
+      });
+
+      const updateBadge = (id, count) => {
+        const b = clone.getElementById(id);
+        if (b) {
+          b.textContent = count;
+          b.style.opacity = count > 0 ? "1" : "0.3";
+        }
+      };
+
+      updateBadge("badge-ml-callbacks", buckets.callbacks.length);
+      updateBadge("badge-ml-yes", buckets.yes.length);
+      updateBadge("badge-ml-followup", buckets.followup.length);
+      updateBadge("badge-ml-noreply", buckets.noreply.length);
+      updateBadge("badge-ml-new", buckets.new.length);
     }
-
-    if (tabYes) {
-      tabYes.setAttribute("onclick", "renderMyLeads('replies')");
-      tabYes.innerHTML = `New Replies <span style="background: #00e676; color: #0a1a14; padding: 2px 8px; border-radius: 12px; font-size: 11px; margin-left: 6px; opacity: ${repliesCount > 0 ? "1" : "0.3"}">${repliesCount}</span>`;
-
-      if (repliesCount > 0) {
-        if (!document.getElementById("style-pulse-replies")) {
-          const style = document.createElement("style");
-          style.id = "style-pulse-replies";
-          style.innerHTML = `
-            @keyframes pulse-replies-text {
-              0% { color: #00e676; text-shadow: 0 0 10px rgba(0,230,118,0.6); }
-              50% { color: var(--text-2); text-shadow: none; }
-              100% { color: #00e676; text-shadow: 0 0 10px rgba(0,230,118,0.6); }
-            }
-          `;
-          document.head.appendChild(style);
-        }
-        tabYes.style.animation = "pulse-replies-text 1.5s infinite";
-      }
-    }
-
-    const tabsUI = { queue: tabNew, replies: tabYes };
-    Object.keys(tabsUI).forEach((key) => {
-      if (tabsUI[key]) {
-        if (key === tab) {
-          tabsUI[key].style.color = "var(--text-1)";
-          tabsUI[key].style.borderBottomColor = "#38bdf8";
-        } else {
-          tabsUI[key].style.color = "var(--text-2)";
-          tabsUI[key].style.borderBottomColor = "transparent";
-        }
-      }
-    });
-  } else {
-    // ==========================================
-    // 👑 STANDARD ADMIN 4-TAB UI
-    // ==========================================
-    const tabsUI = {
-      callbacks: clone.getElementById("tab-ml-callbacks"),
-      yes: clone.getElementById("tab-ml-yes"),
-      followup: clone.getElementById("tab-ml-followup"),
-      new: clone.getElementById("tab-ml-new"),
-    };
-
-    Object.keys(tabsUI).forEach((key) => {
-      if (tabsUI[key]) {
-        if (key === tab) {
-          tabsUI[key].style.color = "var(--text-1)";
-          tabsUI[key].style.borderBottomColor = "#38bdf8";
-        } else {
-          tabsUI[key].style.color = "var(--text-2)";
-          tabsUI[key].style.borderBottomColor = "transparent";
-        }
-      }
-    });
-
-    const updateBadge = (id, count) => {
-      const b = clone.getElementById(id);
-      if (b) {
-        b.textContent = count;
-        b.style.opacity = count > 0 ? "1" : "0.3";
-      }
-    };
-
-    updateBadge("badge-ml-callbacks", buckets.callbacks.length);
-    updateBadge("badge-ml-yes", buckets.yes.length);
-    updateBadge("badge-ml-followup", buckets.followup.length);
-    updateBadge("badge-ml-new", buckets.new.length);
   }
 
+  // ==========================================
+  // 🛑 5. EMPTY QUEUE STATE FOR TAB
+  // ==========================================
   const subtitleEl = clone.getElementById("myleads-subtitle");
   const feedWrap = clone.getElementById("lead-feed-wrap");
 
@@ -2206,135 +2308,80 @@ function renderMyLeads(tab = window._currentMyLeadsTab) {
     _currentFeedIndex = 0;
     if (window._clockTimer) clearInterval(window._clockTimer);
 
-    if (subtitleEl)
-      subtitleEl.textContent = adminView
+    if (subtitleEl) {
+      subtitleEl.textContent = userIsAdmin
         ? `// 0 remaining in this tab`
-        : `// Queue clear`;
+        : `// 0 leads remaining in ${tab === "tt_leads" ? "CA Trouble List" : "Standard Queue"}`;
+    }
 
     if (feedWrap) {
       const sleepingBannerHTML =
         hiddenByTimezone > 0
           ? `<div style="background: var(--blue-light, #e0e7ff); color: var(--blue-dark, #3730a3); padding: 10px 16px; border-radius: 8px; display: inline-block; margin-bottom: 24px; font-size: 14px; font-weight: 600;">
-            🌙 ${hiddenByTimezone} lead${hiddenByTimezone !== 1 ? "s" : ""} resting outside 8 AM - 8 PM dialing hours.
-          </div><br>`
+              🌙 ${hiddenByTimezone} lead${hiddenByTimezone !== 1 ? "s" : ""} resting outside 8 AM - 8 PM dialing hours.
+            </div><br>`
           : ``;
 
       feedWrap.innerHTML = `
         <div class="card" style="text-align:center; padding:60px 20px;">
           <div style="font-size:4rem; margin-bottom:20px;">☕</div>
-          <h2 class="view-title">${adminView ? "Tab Clear!" : "Queue Clear!"}</h2>
-          <p style="color:var(--text-3); margin-bottom:${hiddenByTimezone > 0 ? "16px" : "24px"};">No leads currently require action.</p>
+          <h2 class="view-title">Queue Clear!</h2>
+          <p style="color:var(--text-3); margin-bottom:${hiddenByTimezone > 0 ? "16px" : "24px"};">No leads currently require action in this bucket.</p>
           ${sleepingBannerHTML}
-          <button class="btn-primary" onclick="this.innerHTML='Syncing...'; this.disabled=true; loadAllData();">Check for Updates</button>
+          <button class="btn-primary" onclick="this.innerHTML='Syncing...'; this.disabled=true; typeof loadAllData === 'function' ? loadAllData() : window.location.reload();">Check for Updates</button>
         </div>`;
     }
 
     mainContent.appendChild(clone);
-    SMS.loadConversation(null);
+    if (userIsAdmin && typeof SMS !== "undefined") SMS.loadConversation(null);
     return;
   }
 
   // ==========================================
-  // 🚀 DYNAMIC QUICK REPLIES & EDIT BUTTON
+  // 🚀 6. DYNAMIC QUICK REPLIES (ADMIN ONLY)
   // ==========================================
   const activeLead = myLeads[_currentFeedIndex];
-  const qrContainer = clone.getElementById("sms-quick-reply-container");
-  const smsInputBox = clone.getElementById("sms-input-box");
-  const smsComposerWrapper = smsInputBox
-    ? smsInputBox.closest("div[style*='padding: 16px 20px']")
-    : null;
 
-  if (smsComposerWrapper) smsComposerWrapper.style.display = "block";
-  if (qrContainer) qrContainer.style.display = "flex";
+  if (userIsAdmin) {
+    const qrContainer = clone.getElementById("sms-quick-reply-container");
 
-  if (qrContainer && Config.smsTemplates) {
-    Object.keys(Config.smsTemplates).forEach((key) => {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "btn-ghost-sm";
-      btn.style.cssText =
-        "background: #1e1e24; color: #f8fafc; padding: 4px 10px; border-radius: 14px; font-size: 11px; white-space: nowrap; border: 1px solid #2a2a32; transition: all 0.2s;";
-      btn.textContent = "+ " + key.charAt(0).toUpperCase() + key.slice(1);
+    if (qrContainer && typeof Config !== "undefined" && Config.smsTemplates) {
+      Object.keys(Config.smsTemplates).forEach((key) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "btn-ghost-sm";
+        btn.style.cssText =
+          "background: #1e1e24; color: #f8fafc; padding: 4px 10px; border-radius: 14px; font-size: 11px; white-space: nowrap; border: 1px solid #2a2a32; transition: all 0.2s;";
+        btn.textContent = "+ " + key.charAt(0).toUpperCase() + key.slice(1);
 
-      btn.onclick = () => {
-        let txt = Config.smsTemplates[key];
+        btn.onclick = () => {
+          if (typeof SMS !== "undefined" && SMS.insertQuickReply) {
+            let txt = Config.smsTemplates[key];
+            if (activeLead) {
+              const cleanName =
+                activeLead.firstName ||
+                (activeLead.name ? activeLead.name.split(" ")[0] : "there");
+              const cleanAgent = window._agentName
+                ? window._agentName.split(" ")[0]
+                : "your Frontier specialist";
+              const cleanBTN =
+                activeLead.btn || activeLead.BTN || "your account";
 
-        // 🚀 OFFICE NUMBER LOCALSTORAGE INTERCEPT
-        if (txt.includes("{OfficeNumber}")) {
-          let savedOfficeNum = localStorage.getItem("RaimakAgentOfficeNumber");
-          if (!savedOfficeNum) {
-            savedOfficeNum = prompt(
-              "Please enter your direct Office / Callback Number:\n(We will save this for your future texts)",
-            );
-            if (savedOfficeNum && savedOfficeNum.trim() !== "") {
-              localStorage.setItem(
-                "RaimakAgentOfficeNumber",
-                savedOfficeNum.trim(),
-              );
-              const editBtn = document.getElementById("btn-edit-office-num");
-              if (editBtn)
-                editBtn.innerHTML = `⚙️ Office #: <span style="color:#00e676;">${savedOfficeNum.trim()}</span>`;
-            } else {
-              if (typeof UI !== "undefined" && UI.showToast)
-                UI.showToast(
-                  "Office number is required for this template.",
-                  "error",
-                );
-              return;
+              txt = txt.replace(/{FirstName}/gi, cleanName);
+              txt = txt.replace(/{AgentName}/gi, cleanAgent);
+              txt = txt.replace(/{BTN}/gi, cleanBTN);
             }
+            SMS.insertQuickReply(txt);
           }
-          txt = txt.replace(/{OfficeNumber}/gi, savedOfficeNum);
-        }
-
-        if (activeLead) {
-          const cleanName =
-            activeLead.firstName ||
-            (activeLead.name ? activeLead.name.split(" ")[0] : "there");
-          const cleanAgent = window._agentName
-            ? window._agentName.split(" ")[0]
-            : "your Verizon specialist";
-          const cleanBTN = activeLead.btn || activeLead.BTN || "your account";
-          txt = txt
-            .replace(/{FirstName}/gi, cleanName)
-            .replace(/{AgentName}/gi, cleanAgent)
-            .replace(/{BTN}/gi, cleanBTN);
-        }
-        SMS.insertQuickReply(txt);
-      };
-      qrContainer.appendChild(btn);
-    });
-
-    // 🚀 EDIT OFFICE NUMBER BUTTON INJECTION
-    const editOfficeBtn = document.createElement("button");
-    editOfficeBtn.id = "btn-edit-office-num";
-    editOfficeBtn.type = "button";
-    editOfficeBtn.className = "btn-ghost-sm";
-
-    // Using margin-left: auto pushes it to the far right of the flex container
-    editOfficeBtn.style.cssText =
-      "background: transparent; color: #94a3b8; padding: 4px 10px; border-radius: 14px; font-size: 11px; white-space: nowrap; border: 1px dashed #3f3f46; margin-left: auto; transition: all 0.2s; cursor: pointer;";
-
-    const currentNum = localStorage.getItem("RaimakAgentOfficeNumber");
-    editOfficeBtn.innerHTML = currentNum
-      ? `⚙️ Office #: <span style="color:#00e676;">${currentNum}</span>`
-      : `⚙️ Set Office #`;
-
-    editOfficeBtn.onclick = () => {
-      const existingNum = localStorage.getItem("RaimakAgentOfficeNumber") || "";
-      const newNum = prompt(
-        "Update your direct Office / Callback Number:",
-        existingNum,
-      );
-      if (newNum !== null && newNum.trim() !== "") {
-        localStorage.setItem("RaimakAgentOfficeNumber", newNum.trim());
-        editOfficeBtn.innerHTML = `⚙️ Office #: <span style="color:#00e676;">${newNum.trim()}</span>`;
-        if (typeof UI !== "undefined" && UI.showToast)
-          UI.showToast("Office number updated successfully!", "success");
-      }
-    };
-    qrContainer.appendChild(editOfficeBtn);
+        };
+        qrContainer.appendChild(btn);
+      });
+    }
   }
 
+  // ==========================================
+  // 7. THE RENDER LOGIC
+  // ==========================================
   if (subtitleEl) {
     subtitleEl.textContent = `// ${myLeads.length} remaining · lead ${_currentFeedIndex + 1} of ${myLeads.length}`;
   }
@@ -2346,7 +2393,9 @@ function renderMyLeads(tab = window._currentMyLeadsTab) {
 
   mainContent.appendChild(clone);
 
-  SMS.loadConversation(activeLead);
+  if (userIsAdmin && typeof SMS !== "undefined") {
+    SMS.loadConversation(activeLead);
+  }
 
   updateClock();
   if (window._clockTimer) clearInterval(window._clockTimer);
@@ -2679,6 +2728,72 @@ function renderLeadFeedCard(myLeads) {
     soldBySelect.appendChild(option);
   });
 
+  // ==========================================
+  // 🚀 RESTORED: AUTOPAY RADIO BUTTONS
+  // ==========================================
+  const autoPayContainer = clone.getElementById("feed-autopay-container");
+  if (autoPayContainer) {
+    const autoPayOptions = (typeof Config !== "undefined" &&
+      (Config.autoPayOptions || Config.autopayOptions)) || ["Yes", "No"];
+
+    const activeAutoPay = String(
+      draft.autoPay !== undefined
+        ? draft.autoPay
+        : lead.autoPay || lead.AutoPay || lead.autopay || "",
+    ).trim();
+
+    const styleRadioPill = (lbl, isSelected) => {
+      lbl.style.borderColor = isSelected
+        ? "var(--cyan, #38bdf8)"
+        : "var(--border, #334155)";
+      lbl.style.background = isSelected
+        ? "var(--cyan-dim, rgba(56, 189, 248, 0.15))"
+        : "var(--surface-2, #1e293b)";
+      lbl.style.color = isSelected
+        ? "var(--cyan, #38bdf8)"
+        : "var(--text-1, #f8fafc)";
+      lbl.style.boxShadow = isSelected
+        ? "0 0 10px var(--cyan-glow, rgba(56, 189, 248, 0.25))"
+        : "none";
+    };
+
+    autoPayOptions.forEach((opt) => {
+      const isSelected = activeAutoPay.toLowerCase() === opt.toLowerCase();
+
+      const label = document.createElement("label");
+      label.className = "autopay-radio-pill";
+      label.style.cssText =
+        "display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; border-radius: 6px; border: 1px solid var(--border, #334155); cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.15s ease; user-select: none;";
+
+      const radio = document.createElement("input");
+      radio.type = "radio";
+      radio.name = "feed-autopay";
+      radio.value = opt;
+      radio.checked = isSelected;
+      radio.style.cssText =
+        "margin: 0; cursor: pointer; accent-color: var(--cyan, #38bdf8);";
+
+      styleRadioPill(label, isSelected);
+
+      radio.addEventListener("change", () => {
+        autoPayContainer
+          .querySelectorAll(".autopay-radio-pill")
+          .forEach((pill) => {
+            const inp = pill.querySelector('input[type="radio"]');
+            styleRadioPill(pill, Boolean(inp && inp.checked));
+          });
+        updateLeadDraft(lead.id, "autoPay", radio.value);
+      });
+
+      const textSpan = document.createElement("span");
+      textSpan.textContent = opt;
+
+      label.appendChild(radio);
+      label.appendChild(textSpan);
+      autoPayContainer.appendChild(label);
+    });
+  }
+
   // Status Buttons
   const statusContainer = clone.getElementById("feed-status-buttons");
   const hiddenStatuses = ["New", "TD Non-Reg", "D2D Lead"];
@@ -2942,48 +3057,72 @@ function stageStatus(leadId, newStatus) {
 
 async function agentSaveAll(leadId) {
   const user = State.currentUser;
-  window._sessionWorkedLeads = window._sessionWorkedLeads || new Map();
-  window._sessionWorkedLeads.set(leadId, Date.now());
   const lead = State.leads.find((l) => l.id === leadId);
   if (!lead) return;
 
   const newStatus = _stagedStatus || lead.status;
 
-  // 1. Grab UI Values
-  const mrc = (document.getElementById("feed-mrc") || {}).value || "";
+  // 1. Grab UI Values (Frontier / Admin Feed Card)
+  const mrc = ((document.getElementById("feed-mrc") || {}).value || "").trim();
   const newNote = (document.getElementById("feed-notes") || {}).value || "";
-  const cbr = (document.getElementById("feed-cbr") || {}).value || "";
-  const btn = (document.getElementById("feed-btn") || {}).value || "";
+  const rawCbr = (document.getElementById("feed-cbr") || {}).value || "";
+  const rawBtn = (document.getElementById("feed-btn") || {}).value || "";
 
-  // 🚀 NEW: Grab Verizon fields instead of Products/AutoPay
-  const currentProvider =
-    (document.getElementById("feed-provider") || {}).value || "";
-  const numberOfLines =
-    (document.getElementById("feed-lines") || {}).value || "";
-  const quotedAt = (document.getElementById("feed-quoted") || {}).value || "";
+  // Strip dashes/spaces/parens so CBR stays clean for Twilio/SMS matching
+  const cbrDigits = rawCbr.replace(/\D/g, "");
+  const cbr =
+    cbrDigits.length === 11 && cbrDigits.startsWith("1")
+      ? cbrDigits.slice(-10)
+      : cbrDigits;
 
-  const phoneStatusEl = document.querySelector(
-    'input[name="feed-phonestatus"]:checked',
+  const btnDigits = rawBtn.replace(/\D/g, "");
+  const btn =
+    btnDigits.length === 11 && btnDigits.startsWith("1")
+      ? btnDigits.slice(-10)
+      : btnDigits;
+
+  const currentProducts =
+    (document.getElementById("feed-products") || {}).value || "";
+
+  const autoPayEl = document.querySelector(
+    'input[name="feed-autopay"]:checked',
   );
-  const phoneStatus = phoneStatusEl ? phoneStatusEl.value : "";
+  const autoPay = autoPayEl ? autoPayEl.value : "";
 
   const soldByEl = document.getElementById("feed-sold-by");
   const soldByName = soldByEl ? soldByEl.value : "";
-  let rawCallbackDate =
+  const rawCallbackDate =
     (document.getElementById("f-callback-date") || {}).value || "";
 
   // ==========================================
-  // 🛑 THE BOUNCER: Prevent saving as "New"
+  // 🛑 VALIDATION
   // ==========================================
   if (newStatus === "New") {
     return UI.showToast("Please update the lead status from 'New'.", "warning");
   }
 
-  // Validation (Terminal Bypass)
   const isTerminal = Config.terminalStatuses.includes(newStatus);
   if (!isTerminal) {
-    if (newStatus === Config.soldStatus && !soldByName)
-      return UI.showToast("Select Sold By", "error");
+    if (newStatus === Config.soldStatus && !soldByName) {
+      return UI.showToast(
+        "Please select who made the sale (Sold By).",
+        "error",
+      );
+    }
+
+    if (
+      (newStatus === Config.soldStatus || newStatus === "Pending Order") &&
+      !autoPay
+    ) {
+      return UI.showToast("Please select an AutoPay option.", "error");
+    }
+
+    if (newStatus === "Pending Order" && !rawCallbackDate && !lead.callbackAt) {
+      return UI.showToast(
+        "Please select an Install / Follow-up Date for Pending Order.",
+        "error",
+      );
+    }
   }
 
   // Note Stamping
@@ -3013,31 +3152,29 @@ async function agentSaveAll(leadId) {
 
   // 2. Setup Payload for SharePoint
   const todayDate = new Date().toISOString().split("T")[0];
+  const callbackISO = rawCallbackDate
+    ? new Date(rawCallbackDate).toISOString()
+    : newStatus === "Pending Order"
+      ? lead.callbackAt || null
+      : null;
+
   const saveFields = {
     Status: newStatus,
     LastTouchedOn: todayDate,
     Notes: notes,
+    CallbackDateTime: callbackISO,
   };
 
   if (mrc) saveFields["MonthlyRecurringCharge_x0028_MRC"] = mrc;
   if (cbr) saveFields["CBR"] = cbr;
   if (btn) saveFields["BTN"] = btn;
-
-  // 🚀 NEW: Payload append
-  if (currentProvider) saveFields["CurrentProvider"] = currentProvider;
-  if (numberOfLines) saveFields["NumberOfLines"] = numberOfLines;
-  if (quotedAt) saveFields["QuotedAt"] = quotedAt;
-  if (phoneStatus) saveFields["PhoneStatus"] = phoneStatus;
-
-  saveFields["CallbackDateTime"] = rawCallbackDate
-    ? new Date(rawCallbackDate).toISOString()
-    : newStatus === "Pending Order"
-      ? lead.callbackAt
-      : null;
+  if (currentProducts) saveFields["CurrentProducts"] = currentProducts;
+  if (autoPay) saveFields["AutoPay"] = autoPay;
 
   if (newStatus === "TDM") {
     saveFields["Agent_x0020_Assigned"] = null;
   }
+
   setLoading(true);
   try {
     const logEntry = {
@@ -3057,7 +3194,18 @@ async function agentSaveAll(leadId) {
       Graph.logActivity(logEntry),
     ]);
 
-    // LOCAL STATE: Fixed leadName mapping
+    // Mark as worked only AFTER SharePoint accepts the save
+    window._sessionWorkedLeads = window._sessionWorkedLeads || new Map();
+    window._sessionWorkedLeads.set(leadId, Date.now());
+
+    // Clear saved draft + note input so re-opens stay clean
+    if (State.drafts && State.drafts[leadId]) {
+      delete State.drafts[leadId];
+    }
+    const notesBox = document.getElementById("feed-notes");
+    if (notesBox) notesBox.value = "";
+
+    // LOCAL STATE: Activity Log
     State.activityLog.push({
       id: "local-" + Date.now(),
       leadId: leadId,
@@ -3072,19 +3220,34 @@ async function agentSaveAll(leadId) {
     // 3. Update RAM (Optimistic UI)
     lead.status = newStatus;
     lead.notes = notes;
-    if (mrc) lead.currentMRC = mrc;
-    if (cbr) lead.cbr = cbr;
-    if (btn) lead.btn = btn;
+    lead.lastTouchedOn = todayDate;
+    lead.lastContacted = new Date().toISOString();
+    lead.callbackAt = callbackISO;
 
-    // 🚀 NEW: Update RAM Drafts
-    if (currentProvider) lead.currentProvider = currentProvider;
-    if (numberOfLines) lead.numberOfLines = numberOfLines;
-    if (quotedAt) lead.quotedAt = quotedAt;
-    if (phoneStatus) lead.phoneStatus = phoneStatus;
+    if (mrc) {
+      lead.currentMRC = mrc;
+      lead.mrc = mrc;
+    }
+    if (cbr) {
+      lead.cbr = cbr;
+      lead.CBR = cbr;
+    }
+    if (btn) {
+      lead.btn = btn;
+      lead.BTN = btn;
+    }
+    if (currentProducts) lead.currentProducts = currentProducts;
+    if (autoPay) {
+      lead.autoPay = autoPay;
+      lead.AutoPay = autoPay;
+    }
+    if (newStatus === "TDM") {
+      lead.assignedTo = null;
+    }
 
-    lead.callbackAt = rawCallbackDate || null;
-
-    Points.awardPoints(newStatus, leadId);
+    if (typeof Points !== "undefined" && Points.awardPoints) {
+      Points.awardPoints(newStatus, leadId);
+    }
 
     if (newStatus === "TDM") {
       UI.showToast("TDM — lead returned to admin queue.", "info");
@@ -3133,7 +3296,9 @@ async function agentSaveAll(leadId) {
       }
     }
 
-    if (Ticker && Ticker.update) Ticker.update();
+    if (typeof Ticker !== "undefined" && Ticker && Ticker.update) {
+      Ticker.update();
+    }
   } catch (err) {
     console.error("Save Error:", err);
     UI.showToast("Failed to save: " + err.message, "error");
