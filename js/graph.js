@@ -601,7 +601,6 @@ const Graph = (() => {
     };
 
     try {
-      // Try the normal update first
       return await apiFetch(url, options);
     } catch (err) {
       const errMsg = (err.message || "").toLowerCase();
@@ -612,28 +611,46 @@ const Graph = (() => {
           `Lead ${itemId} missing from server! Checking local memory...`,
         );
 
-        // 1. Find the INDEX of the ghost using type-safe String coercion
+        const stateRef = typeof State !== "undefined" ? State : window.State;
         const deadLeadIndex =
-          window.State && window.State.leads
-            ? window.State.leads.findIndex(
-                (l) => String(l.id) === String(itemId),
-              )
+          stateRef && stateRef.leads
+            ? stateRef.leads.findIndex((l) => String(l.id) === String(itemId))
             : -1;
 
+        const purgeFromLocalDB = async (id) => {
+          if (typeof LocalDB !== "undefined" && LocalDB.deleteItem) {
+            try {
+              await LocalDB.deleteItem("leads", id);
+              await LocalDB.deleteItem("leads", String(id));
+              if (!isNaN(Number(id)))
+                await LocalDB.deleteItem("leads", Number(id));
+            } catch (e) {}
+          }
+        };
+
+        // 🛑 Never resurrect a lead we are actively soft-deleting
+        if (fields && fields.Status === "Deleted") {
+          if (deadLeadIndex !== -1) stateRef.leads.splice(deadLeadIndex, 1);
+          await purgeFromLocalDB(itemId);
+          return { deleted: true, purgedFromCache: true };
+        }
+
         if (deadLeadIndex === -1) {
+          await purgeFromLocalDB(itemId);
           throw new Error(
             "Lead missing from server and no local memory found to rebuild it.",
           );
         }
 
-        const deadLead = window.State.leads[deadLeadIndex];
+        const deadLead = stateRef.leads[deadLeadIndex];
 
-        // 🚀 THE PURGE MECHANIC: Strictly enforces Name & Address
+        // 🚀 THE PURGE MECHANIC: Strictly enforces Name & Address (+ purges LocalDB!)
         if (!deadLead.name || !deadLead.address) {
           console.warn(
             `Lead ${itemId} lacks mandatory Name/Address. Purging from local cache.`,
           );
-          window.State.leads.splice(deadLeadIndex, 1);
+          stateRef.leads.splice(deadLeadIndex, 1);
+          await purgeFromLocalDB(itemId);
           throw new Error(
             "Lead missing from server and lacked minimum data to resurrect. It has been deleted locally.",
           );
@@ -641,13 +658,9 @@ const Graph = (() => {
 
         console.warn(`Resurrecting Lead ${itemId}...`);
 
-        // 2. REVERSE MAP: Building the payload using your normalizeLeadItem schema
         const rebuiltPayload = {
-          // THE MANDATORIES
           Title: deadLead.name,
           Address: deadLead.address,
-
-          // THE NICE-TO-HAVES (Pulled from local cache, ignoring Phone/CBR/BTN)
           FirstName: deadLead.firstName || "",
           LastName: deadLead.lastName || "",
           Email: deadLead.email || "",
@@ -659,22 +672,21 @@ const Graph = (() => {
           Notes: deadLead.notes || "",
           LeadType: deadLead.leadType || "",
           PreviousAgents: deadLead.previousAgents || "",
-
-          // 3. Drop the brand new edits right on top of the resurrected data
           ...fields,
         };
 
-        // 4. Fire your existing addLead function to create the new row in SharePoint
         const resurrectedLead = await addLead(rebuiltPayload);
 
-        // 5. Swap the ID in local RAM so the UI knows about the newly generated SharePoint ID
+        await purgeFromLocalDB(itemId);
         deadLead.id = resurrectedLead.id;
-
-        // Pretend everything went perfectly
         return resurrectedLead;
       }
 
-      // If it failed for any other reason (like a 500 error), throw it normally
+      console.error(
+        `❌ updateLead(${itemId}) failed with payload:`,
+        fields,
+        err,
+      );
       throw err;
     }
   }

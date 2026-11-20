@@ -1904,8 +1904,9 @@ function renderMyLeads(tab = window._currentMyLeadsTab) {
 
   if (typeof _leadSaved === "undefined") window._leadSaved = false;
 
-  if (!window._forceShowLead && tab === window._currentMyLeadsTab) {
-    window._currentFeedIndex = 0;
+  // 🔧 FIX: Reset the actual _currentFeedIndex variable (not window._currentFeedIndex)
+  if (!window._forceShowLead) {
+    _currentFeedIndex = 0;
   }
 
   const updateClock = () => {
@@ -2023,7 +2024,9 @@ function renderMyLeads(tab = window._currentMyLeadsTab) {
       }
     }
 
-    const hasUnread = l.SMSUnread === true || l.smsUnread === true;
+    // 🔧 FIX: Never let SMSUnread bypass cool-off/callbacks on TT Leads or for non-admins
+    const hasUnread =
+      userIsAdmin && !isTT && (l.SMSUnread === true || l.smsUnread === true);
 
     if (waitingForDate && !hasUnread) return false;
     if (!isDueCallback && !hasUnread && Graph.isInCoolOff(l)) return false;
@@ -2073,21 +2076,34 @@ function renderMyLeads(tab = window._currentMyLeadsTab) {
   const fiveMinsFromNow = Date.now() + 5 * 60000;
 
   baseLeads.forEach((l) => {
+    const typeStr = (
+      l.leadType ||
+      l.Lead_x0020_Type ||
+      l.LeadType ||
+      ""
+    ).trim();
+    const isTT = typeStr === "TT Leads";
+
     const isCallbackDue =
       l.callbackAt && new Date(l.callbackAt).getTime() <= fiveMinsFromNow;
-    const isUnread = l.SMSUnread === true || l.smsUnread === true;
+    const isUnread =
+      userIsAdmin && !isTT && (l.SMSUnread === true || l.smsUnread === true);
     const isSmsContacted =
-      l.SMSContacted === true ||
-      l.smsContacted === true ||
-      l.SMSContacted === "Yes" ||
-      l.SMSContacted === "true";
+      !isTT &&
+      (l.SMSContacted === true ||
+        l.smsContacted === true ||
+        l.SMSContacted === "Yes" ||
+        l.SMSContacted === "true");
 
-    const isYes = l.status === "Yes";
+    const isYes = !isTT && l.status === "Yes";
     const isFresh = l.status === "New" && !isSmsContacted;
+
+    // 🔧 FIX: Keep TT Leads out of No Reply so 1st/2nd/3rd Contact TT leads return to the agent's CA Trouble List after cool-off
     const isNoReply =
-      (["1st Contact", "2nd Contact", "3rd Contact"].includes(l.status) &&
+      !isTT &&
+      ((["1st Contact", "2nd Contact", "3rd Contact"].includes(l.status) &&
         !l.verifiedYes) ||
-      (l.status === "New" && isSmsContacted);
+        (l.status === "New" && isSmsContacted));
 
     if (isCallbackDue) {
       buckets.callbacks.push(l);
@@ -2122,8 +2138,8 @@ function renderMyLeads(tab = window._currentMyLeadsTab) {
   // 🛑 3. AGENT DUAL-QUEUE OR ADMIN 5-TAB QUEUE
   // ==========================================
   const rawAgentQueue = [
-    ...buckets.new,
     ...buckets.callbacks,
+    ...buckets.new,
     ...buckets.yes,
     ...buckets.followup,
   ];
@@ -2525,22 +2541,18 @@ function getMyContactsToday() {
 let _stagedStatus = null;
 
 function renderLeadFeedCard(myLeads) {
-  // 1. FIXED LOGIC: Grab the exact lead we are supposed to be looking at!
   let lead = myLeads[_currentFeedIndex];
-
   const isCoolOff = lead ? Graph.isInCoolOff(lead) : false;
 
   _stagedStatus = null;
   window._forceShowLead = false;
 
-  // 2. Setup Template
   const template = document.getElementById("tmpl-lead-feed-card");
   const clone = template.content.cloneNode(true);
 
   const emptyState = clone.getElementById("feed-card-empty");
   const activeState = clone.getElementById("feed-card-active");
 
-  // 3. Handle Empty State
   if (!lead) {
     emptyState.style.display = "flex";
     clone.getElementById("feed-empty-text").textContent =
@@ -2553,14 +2565,23 @@ function renderLeadFeedCard(myLeads) {
     return wrapper;
   }
 
-  // 4. Handle Active Lead State
   activeState.style.display = "block";
 
   // Badges & Name
+  const typeStr = (
+    lead.leadType ||
+    lead.Lead_x0020_Type ||
+    lead.LeadType ||
+    ""
+  ).trim();
+  const isTTLead = typeStr === "TT Leads";
+
   const typeBadge = clone.getElementById("feed-lead-type");
-  if (lead.leadType) {
-    typeBadge.textContent = lead.leadType;
-    typeBadge.className = `lead-type-badge lead-type-${lead.leadType.toLowerCase()}`;
+  if (typeStr) {
+    typeBadge.textContent = typeStr;
+    typeBadge.className = `lead-type-badge lead-type-${typeStr
+      .toLowerCase()
+      .replace(/\s+/g, "-")}`;
   } else {
     typeBadge.style.display = "none";
   }
@@ -2605,7 +2626,7 @@ function renderLeadFeedCard(myLeads) {
     }
   }
 
-  // Meta Row (Icons)
+  // Meta Row
   let metaHtml = "";
   if (lead.phone)
     metaHtml += `<span class="feed-meta">📞 ${escHtml(lead.phone)}</span>`;
@@ -2615,7 +2636,7 @@ function renderLeadFeedCard(myLeads) {
     metaHtml += `<span class="feed-meta">📍 ${escHtml(lead.address)}${lead.city ? ", " + escHtml(lead.city) : ""}${lead.state ? " " + escHtml(lead.state) : ""}${lead.zip ? " " + escHtml(lead.zip) : ""}</span>`;
   clone.getElementById("feed-meta-container").innerHTML = metaHtml;
 
-  // 🚀 RESTORED: Form Inputs & Products Dropdown
+  // Form Inputs & Products Dropdown
   clone.getElementById("feed-btn").value =
     lead.btn || lead.BTN || lead.phone || "";
   clone.getElementById("feed-cbr").value = lead.cbr || lead.CBR || "";
@@ -2635,8 +2656,7 @@ function renderLeadFeedCard(myLeads) {
     });
   }
 
-  // THE DRAFT PEEK
-  const draft = State.drafts[lead.id] || {};
+  const draft = (State.drafts && State.drafts[lead.id]) || {};
   const activeProducts =
     draft.currentProducts !== undefined
       ? draft.currentProducts
@@ -2644,7 +2664,7 @@ function renderLeadFeedCard(myLeads) {
   if (productsSelect) productsSelect.value = activeProducts || "";
 
   // ==========================================
-  // 2. PULLING THE SAVED CALLBACK DATE UI
+  // 2. SAVED CALLBACK DATE UI
   // ==========================================
   const callbackInput = clone.getElementById("f-callback-date");
   const callbackWrap = clone.getElementById("callback-wrapper");
@@ -2729,7 +2749,7 @@ function renderLeadFeedCard(myLeads) {
   });
 
   // ==========================================
-  // 🚀 RESTORED: AUTOPAY RADIO BUTTONS
+  // 🚀 AUTOPAY RADIO BUTTONS
   // ==========================================
   const autoPayContainer = clone.getElementById("feed-autopay-container");
   if (autoPayContainer) {
@@ -2794,6 +2814,42 @@ function renderLeadFeedCard(myLeads) {
     });
   }
 
+  // ==========================================
+  // 🚨 CA TT ONLY: INTERACTION SUMMARY DROPDOWN
+  // ==========================================
+  const ttOutcomeWrap = clone.getElementById("feed-tt-outcome-wrap");
+  const ttOutcomeSelect = clone.getElementById("feed-tt-outcome");
+
+  if (ttOutcomeWrap && ttOutcomeSelect && isTTLead) {
+    ttOutcomeWrap.style.display = "block";
+
+    const outcomeOptions = (typeof Config !== "undefined" &&
+      Config.ttOutcomeOptions) || [
+      "No Answer / Voicemail",
+      "Answered - Callback / Follow-up",
+      "Answered - Pending Order",
+      "Answered - Sold",
+      "Answered - Declined",
+      "Wrong / Disconnected Number",
+      "Already Resolved / Has Fiber",
+    ];
+
+    outcomeOptions.forEach((opt) => {
+      const el = document.createElement("option");
+      el.value = opt;
+      el.textContent = opt;
+      ttOutcomeSelect.appendChild(el);
+    });
+
+    if (draft.ttOutcome !== undefined) {
+      ttOutcomeSelect.value = draft.ttOutcome;
+    }
+
+    ttOutcomeSelect.addEventListener("change", (e) => {
+      updateLeadDraft(lead.id, "ttOutcome", e.target.value);
+    });
+  }
+
   // Status Buttons
   const statusContainer = clone.getElementById("feed-status-buttons");
   const hiddenStatuses = ["New", "TD Non-Reg", "D2D Lead"];
@@ -2819,23 +2875,20 @@ function renderLeadFeedCard(myLeads) {
     });
 
   // ==========================================
-  // 🚀 THE NEW SMART MULTILINE PARSER
+  // 🚀 SMART MULTILINE NOTES PARSER
   // ==========================================
   const pastNotesContainer = clone.getElementById("feed-past-notes-container");
   if (lead.notes && lead.notes.trim()) {
     pastNotesContainer.style.display = "block";
 
-    // 1. Split by line but DO NOT render immediately
     const lines = lead.notes.split("\n").filter((l) => l.trim());
     const groupedNotes = [];
     let currentNote = null;
 
-    // 2. Group the lines together cleanly
     lines.forEach((line) => {
       const match = line.match(/^\[(\d{2}\/\d{2}(?:\/\d{2})?)(.*?)\]\s*(.*)/);
 
       if (match) {
-        // We found a new stamp! Push the old note and start a new one.
         if (currentNote) groupedNotes.push(currentNote);
         const date = match[1];
         const agent = match[2] ? match[2].replace(/^\s*-\s*/, "") : "";
@@ -2844,7 +2897,6 @@ function renderLeadFeedCard(myLeads) {
           textLines: [match[3]],
         };
       } else {
-        // No stamp found. Add this line to the existing bubble!
         if (!currentNote) {
           currentNote = {
             author: "Legacy note — author unknown",
@@ -2857,36 +2909,34 @@ function renderLeadFeedCard(myLeads) {
 
     if (currentNote) groupedNotes.push(currentNote);
 
-    // 3. Render the grouped notes into HTML
     const notesHtml = groupedNotes
       .map((note) => {
         const mergedText = note.textLines.join("\n");
 
         return `
         <div style="background: var(--surface-2, #1e293b); border: 1px solid var(--border, #334155); border-radius: 8px; padding: 12px 16px; margin-bottom: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.2);">
-          
           <div style="display: inline-block; background: #0f172a; color: #38bdf8; font-family: var(--font-mono, monospace); font-size: 11px; font-weight: 700; text-transform: uppercase; padding: 4px 10px; border-radius: 4px; margin-bottom: 8px; border: 1px solid #1e293b; letter-spacing: 0.5px;">
             ${escHtml(note.author)}
           </div>
-
           <div style="color: var(--text-1, #f8fafc); font-size: 14px; line-height: 1.6; white-space: pre-wrap; font-weight: 500;">
-            ${
-              escHtml(mergedText)
-                .replace(
-                  "🚨 TT LEAD INFO:",
-                  "<strong style='color: #F59E0B;'>🚨 TT LEAD INFO:</strong>",
-                )
-                .replace(
-                  "🚨 [TT LEAD INFO]",
-                  "<strong style='color: #F59E0B;'>🚨 [TT LEAD INFO]</strong>",
-                )
-                .replace(
-                  / \| /g,
-                  "  <strong style='color: #475569;'>•</strong>  ",
-                ) // Turns ugly CSV pipes into clean bullet points
-            }
+            ${escHtml(mergedText)
+              .replace(
+                "🚨 TT LEAD INFO:",
+                "<strong style='color: #F59E0B;'>🚨 TT LEAD INFO:</strong>",
+              )
+              .replace(
+                "🚨 [TT LEAD INFO]",
+                "<strong style='color: #F59E0B;'>🚨 [TT LEAD INFO]</strong>",
+              )
+              .replace(
+                /\[TT Outcome:\s*([^\]]+)\]/g,
+                "<span style='display:inline-block;background:rgba(245,158,11,0.15);color:#FBBF24;border:1px solid rgba(245,158,11,0.35);border-radius:4px;padding:1px 6px;font-size:11px;font-weight:700;margin-right:6px;'>$1</span>",
+              )
+              .replace(
+                / \| /g,
+                "  <strong style='color: #475569;'>•</strong>  ",
+              )}
           </div>
-          
         </div>
       `;
       })
@@ -2898,7 +2948,7 @@ function renderLeadFeedCard(myLeads) {
   // Save Button Action
   clone.getElementById("feed-save-btn").onclick = () => agentSaveAll(lead.id);
 
-  // THE DRAFT MEMORY ENABLER
+  // Draft Memory Enabler
   const inputsToDraft = [
     { id: "feed-btn", key: "btn" },
     { id: "feed-cbr", key: "cbr" },
@@ -2921,7 +2971,6 @@ function renderLeadFeedCard(myLeads) {
     }
   });
 
-  // Wrap and Return
   const wrapper = document.createElement("div");
   wrapper.appendChild(clone);
   return wrapper;
@@ -3061,8 +3110,11 @@ async function agentSaveAll(leadId) {
   if (!lead) return;
 
   const newStatus = _stagedStatus || lead.status;
+  const isTTLead =
+    (lead.leadType || lead.Lead_x0020_Type || lead.LeadType || "").trim() ===
+    "TT Leads";
 
-  // 1. Grab UI Values (Frontier / Admin Feed Card)
+  // 1. Grab UI Values
   const mrc = ((document.getElementById("feed-mrc") || {}).value || "").trim();
   const newNote = (document.getElementById("feed-notes") || {}).value || "";
   const rawCbr = (document.getElementById("feed-cbr") || {}).value || "";
@@ -3089,6 +3141,9 @@ async function agentSaveAll(leadId) {
   );
   const autoPay = autoPayEl ? autoPayEl.value : "";
 
+  const ttOutcome =
+    (document.getElementById("feed-tt-outcome") || {}).value || "";
+
   const soldByEl = document.getElementById("feed-sold-by");
   const soldByName = soldByEl ? soldByEl.value : "";
   const rawCallbackDate =
@@ -3099,6 +3154,13 @@ async function agentSaveAll(leadId) {
   // ==========================================
   if (newStatus === "New") {
     return UI.showToast("Please update the lead status from 'New'.", "warning");
+  }
+
+  if (isTTLead && !ttOutcome) {
+    return UI.showToast(
+      "Please select a CA TT Interaction Summary before saving.",
+      "error",
+    );
   }
 
   const isTerminal = Config.terminalStatuses.includes(newStatus);
@@ -3125,9 +3187,10 @@ async function agentSaveAll(leadId) {
     }
   }
 
-  // Note Stamping
+  // Note Stamping (always stamps TT Outcome even if free-text note is empty)
   let notes = lead.notes || "";
-  if (newNote.trim()) {
+  const outcomeTag = isTTLead && ttOutcome ? `[TT Outcome: ${ttOutcome}] ` : "";
+  if (newNote.trim() || outcomeTag) {
     const today = new Date();
     const dateStamp =
       (today.getMonth() + 1).toString().padStart(2, "0") +
@@ -3136,7 +3199,10 @@ async function agentSaveAll(leadId) {
       "/" +
       String(today.getFullYear()).slice(-2);
     const agentTag = user && user.name ? " - " + user.name : "";
-    const stamped = `[${dateStamp}${agentTag}] ${newStatus} - ${newNote.trim()}`;
+    const bodyText = newNote.trim()
+      ? `${outcomeTag}${newStatus} - ${newNote.trim()}`
+      : `${outcomeTag}${newStatus}`;
+    const stamped = `[${dateStamp}${agentTag}] ${bodyText}`;
     notes = notes ? stamped + "\n" + notes : stamped;
   }
 
@@ -3171,22 +3237,30 @@ async function agentSaveAll(leadId) {
   if (currentProducts) saveFields["CurrentProducts"] = currentProducts;
   if (autoPay) saveFields["AutoPay"] = autoPay;
 
+  // Clear any stuck SMSUnread flag on TT Leads so they can never loop back into queues
+  if (isTTLead && (lead.SMSUnread === true || lead.smsUnread === true)) {
+    saveFields["SMSUnread"] = false;
+  }
+
   if (newStatus === "TDM") {
     saveFields["Agent_x0020_Assigned"] = null;
   }
 
   setLoading(true);
   try {
+    // Log ONLY this interaction's tag/note so nightly reports never double-count prior days
+    const logNotes =
+      `${outcomeTag}${newNote.trim() || newStatus}` +
+      (newStatus === Config.soldStatus && soldByName
+        ? ` [Sold by ${soldByName}]`
+        : "");
+
     const logEntry = {
       LeadID: leadId,
       Title: lead.name || "Unknown Lead",
       ActionType: "Status: " + newStatus,
       AgentEmail: activityEmail,
-      Notes:
-        notes +
-        (newStatus === Config.soldStatus && soldByName
-          ? ` [Sold by ${soldByName}]`
-          : ""),
+      Notes: logNotes,
     };
 
     await Promise.all([
@@ -3194,16 +3268,18 @@ async function agentSaveAll(leadId) {
       Graph.logActivity(logEntry),
     ]);
 
-    // Mark as worked only AFTER SharePoint accepts the save
+    // Mark as worked ONLY after SharePoint accepts the save
     window._sessionWorkedLeads = window._sessionWorkedLeads || new Map();
     window._sessionWorkedLeads.set(leadId, Date.now());
 
-    // Clear saved draft + note input so re-opens stay clean
+    // Clear saved draft + inputs
     if (State.drafts && State.drafts[leadId]) {
       delete State.drafts[leadId];
     }
     const notesBox = document.getElementById("feed-notes");
     if (notesBox) notesBox.value = "";
+    const ttSelectEl = document.getElementById("feed-tt-outcome");
+    if (ttSelectEl) ttSelectEl.value = "";
 
     // LOCAL STATE: Activity Log
     State.activityLog.push({
@@ -3213,14 +3289,15 @@ async function agentSaveAll(leadId) {
       agent: activityEmail,
       agentEmail: activityEmail,
       action: "Status: " + newStatus,
-      notes: notes,
+      notes: logNotes,
       timestamp: new Date().toISOString(),
     });
 
-    // 3. Update RAM (Optimistic UI)
+    // 3. Update RAM (Optimistic UI — keeps isInCoolOff accurate without a full reload)
     lead.status = newStatus;
     lead.notes = notes;
     lead.lastTouchedOn = todayDate;
+    lead.LastTouchedOn = todayDate;
     lead.lastContacted = new Date().toISOString();
     lead.callbackAt = callbackISO;
 
@@ -3241,6 +3318,10 @@ async function agentSaveAll(leadId) {
       lead.autoPay = autoPay;
       lead.AutoPay = autoPay;
     }
+    if (isTTLead) {
+      lead.SMSUnread = false;
+      lead.smsUnread = false;
+    }
     if (newStatus === "TDM") {
       lead.assignedTo = null;
     }
@@ -3259,7 +3340,6 @@ async function agentSaveAll(leadId) {
     _stagedStatus = null;
     _leadSaved = true;
 
-    // Update Save Button
     const saveBtn = document.getElementById("feed-save-btn");
     if (saveBtn) {
       saveBtn.textContent = "Saved ✓";
@@ -3277,7 +3357,6 @@ async function agentSaveAll(leadId) {
       }, 2000);
     }
 
-    // Show Next Row
     const nextRow = document.getElementById("feed-next-row");
     if (nextRow) {
       nextRow.style.display = "block";
