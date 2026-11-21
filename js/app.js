@@ -2210,8 +2210,6 @@ function renderMyLeads(tab = window._currentMyLeadsTab) {
     clone.querySelectorAll(".admin-only").forEach((el) => el.remove());
     const smsCard = clone.getElementById("sms-console-card");
     if (smsCard) smsCard.remove();
-    const smsBadge = clone.getElementById("myleads-contact-badge");
-    if (smsBadge) smsBadge.remove();
   }
 
   const contactsToday =

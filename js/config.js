@@ -92,7 +92,7 @@ const Config = {
 
   roles: {
     admins: [
-      "m.mcaline@raimak.com",
+      "m.mcalpine@raimak.com",
       "RichardZacker@raimak.com",
       "B.Hinesley@raimak.com",
       "S.Balleste@raimak.com",
