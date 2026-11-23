@@ -2751,8 +2751,12 @@ function renderLeadFeedCard(myLeads) {
   // ==========================================
   const autoPayContainer = clone.getElementById("feed-autopay-container");
   if (autoPayContainer) {
-    const autoPayOptions = (typeof Config !== "undefined" &&
-      (Config.autoPayOptions || Config.autopayOptions)) || ["Yes", "No"];
+    const autoPayOptions =
+      (typeof Config !== "undefined" &&
+        (Config.autoPayOptions || Config.autopayOptions)) || [
+        "Yes",
+        "No",
+      ];
 
     const activeAutoPay = String(
       draft.autoPay !== undefined
@@ -2930,10 +2934,7 @@ function renderLeadFeedCard(myLeads) {
                 /\[TT Outcome:\s*([^\]]+)\]/g,
                 "<span style='display:inline-block;background:rgba(245,158,11,0.15);color:#FBBF24;border:1px solid rgba(245,158,11,0.35);border-radius:4px;padding:1px 6px;font-size:11px;font-weight:700;margin-right:6px;'>$1</span>",
               )
-              .replace(
-                / \| /g,
-                "  <strong style='color: #475569;'>•</strong>  ",
-              )}
+              .replace(/ \| /g, "  <strong style='color: #475569;'>•</strong>  ")}
           </div>
         </div>
       `;

@@ -1047,7 +1047,7 @@
   </div>
     </template>
 
-  <template id="tmpl-lead-feed-card">
+<template id="tmpl-lead-feed-card">
   <div id="feed-card-empty" class="feed-card feed-card-empty" style="display: none">
     <div class="feed-empty-icon">&#10003;</div>
     <h3>All Caught Up!</h3>
@@ -1074,7 +1074,7 @@
 
     <div class="feed-meta-row" id="feed-meta-container"></div>
 
-    <!-- 🚀 RESTORED: 2-Column Frontier Input Grid -->
+    <!-- 2-Column Frontier Input Grid -->
     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px;">
       <div class="form-group" style="margin-bottom: 0;">
         <label>BTN / Account Phone</label>
@@ -1121,7 +1121,7 @@
       </div>
     </div>
 
-    <!-- 🚀 RESTORED: AutoPay Radio Group -->
+    <!-- AutoPay Radio Group -->
     <div style="margin-bottom: 16px">
       <div style="font-family: var(--font-mono); font-size: 10px; color: #6b85b0; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1px;">
         AutoPay <span style="color: var(--red)">* Required</span>
@@ -1137,6 +1137,36 @@
     <div id="feed-staged-notice" style="display: none; margin-top: 6px; font-family: var(--font-mono); font-size: 11px; color: var(--amber);"></div>
 
     <div style="margin-top: 16px">
+      <!-- CA TT ONLY: Interaction Summary Dropdown -->
+      <div
+        id="feed-tt-outcome-wrap"
+        style="
+          display: none;
+          margin-bottom: 12px;
+          background: rgba(245, 158, 11, 0.08);
+          border: 1px solid rgba(245, 158, 11, 0.35);
+          border-radius: 8px;
+          padding: 10px 12px;
+        "
+      >
+        <div
+          style="
+            font-family: var(--font-mono);
+            font-size: 10px;
+            color: #F59E0B;
+            margin-bottom: 6px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-weight: 700;
+          "
+        >
+          🚨 CA TT Interaction Summary <span style="color: var(--red)">* Required</span>
+        </div>
+        <select id="feed-tt-outcome" class="form-input" style="width: 100%;">
+          <option value="">Select call outcome...</option>
+        </select>
+      </div>
+
       <span class="feed-label">Notes</span>
       <div id="feed-past-notes-container" style="display: none; background: #f4f7fd; border: 1px solid #d0dcf0; border-radius: 6px; padding: 10px 14px; margin-top: 6px; margin-bottom: 8px; max-height: 140px; overflow-y: auto;"></div>
 
@@ -1156,7 +1186,7 @@
       </button>
     </div>
   </div>
-  </template>
+</template>
 
   <template id="tmpl-suspended">
   <div class="view-header" style="justify-content: center; margin-top: 48px; border-bottom: none;">
