@@ -2751,12 +2751,8 @@ function renderLeadFeedCard(myLeads) {
   // ==========================================
   const autoPayContainer = clone.getElementById("feed-autopay-container");
   if (autoPayContainer) {
-    const autoPayOptions =
-      (typeof Config !== "undefined" &&
-        (Config.autoPayOptions || Config.autopayOptions)) || [
-        "Yes",
-        "No",
-      ];
+    const autoPayOptions = (typeof Config !== "undefined" &&
+      (Config.autoPayOptions || Config.autopayOptions)) || ["Yes", "No"];
 
     const activeAutoPay = String(
       draft.autoPay !== undefined
@@ -2934,7 +2930,10 @@ function renderLeadFeedCard(myLeads) {
                 /\[TT Outcome:\s*([^\]]+)\]/g,
                 "<span style='display:inline-block;background:rgba(245,158,11,0.15);color:#FBBF24;border:1px solid rgba(245,158,11,0.35);border-radius:4px;padding:1px 6px;font-size:11px;font-weight:700;margin-right:6px;'>$1</span>",
               )
-              .replace(/ \| /g, "  <strong style='color: #475569;'>•</strong>  ")}
+              .replace(
+                / \| /g,
+                "  <strong style='color: #475569;'>•</strong>  ",
+              )}
           </div>
         </div>
       `;
@@ -3496,6 +3495,46 @@ function advanceToNextLead() {
 // ============================================================
 //  ASSIGN LEADS (Admin only)
 // ============================================================
+// Shared WYSIWYG helper used by both renderAssignLeads and bulkAssignToSelectedAgent
+function isAutoNoReplyLead(l) {
+  if (!l || !l.id || !(l.name || l.phone || l.BTN || l.btn)) return false;
+  if (Config.terminalStatuses.includes(l.status)) return false;
+
+  const isSmsContacted =
+    l.SMSContacted === true ||
+    l.SMSContacted === "true" ||
+    l.SMSContacted === "Yes" ||
+    l.smsContacted === true;
+
+  if (!isSmsContacted) return false;
+
+  // Exclude leads that replied or were verified Yes
+  const hasReplied =
+    l.SMSUnread === true ||
+    l.smsUnread === true ||
+    l.verifiedYes === true ||
+    l.status === "Yes";
+
+  if (hasReplied) return false;
+
+  // Only allow pulling from Steph / Admins (or unassigned) — never rip from regular agents
+  const assigned = (l.assignedTo || "").trim();
+  if (!assigned) return true;
+
+  const assignedLower = assigned.toLowerCase();
+  if (assignedLower.includes("steph")) return true;
+
+  const owner = (State.contractors || []).find(
+    (c) => (c.name || "").toLowerCase().trim() === assignedLower,
+  );
+  return Boolean(
+    owner &&
+    (owner.role === "Admin" ||
+      owner.role === "admin" ||
+      owner.isAdmin === true),
+  );
+}
+
 function renderAssignLeads() {
   if (!isAdmin()) {
     navigate("myleads");
@@ -3504,13 +3543,22 @@ function renderAssignLeads() {
 
   const { leads, contractors } = State;
 
-  // 🚀 THE FIX: Restored strict !l.assignedTo check so we never rip leads
+  // Standard unassigned pool (strict !l.assignedTo bouncer)
   const unassigned = leads.filter(function (l) {
     const isValidLead = l && l.id && (l.name || l.phone || l.BTN || l.btn);
     const isAvailable =
       !l.assignedTo && !Config.terminalStatuses.includes(l.status);
     return isValidLead && isAvailable;
   });
+
+  // Automation No-Reply pool (Steph / Admin SMS-contacted leads with no reply)
+  const autoNoReplyPool = leads.filter(isAutoNoReplyLead);
+
+  // Combined pool for batch clustering so _batchId is populated on both pools
+  const combinedPoolMap = new Map();
+  unassigned.forEach((l) => combinedPoolMap.set(l.id, l));
+  autoNoReplyPool.forEach((l) => combinedPoolMap.set(l.id, l));
+  const allAssignablePool = [...combinedPoolMap.values()];
 
   const agentCounts = {};
   contractors.forEach((c) => (agentCounts[c.name] = 0));
@@ -3531,7 +3579,7 @@ function renderAssignLeads() {
   let currentBatch = null;
   let legacyCount = 0;
 
-  const sortedForBatches = [...unassigned].sort((a, b) => {
+  const sortedForBatches = [...allAssignablePool].sort((a, b) => {
     return (
       (b.createdAt ? new Date(b.createdAt).getTime() : 0) -
       (a.createdAt ? new Date(a.createdAt).getTime() : 0)
@@ -3573,13 +3621,13 @@ function renderAssignLeads() {
       : "";
 
   // ==========================================
-  // 🎨 THE NEW LAYOUT RESTRUCTURE
+  // 🎨 LAYOUT
   // ==========================================
   document.getElementById("main-content").innerHTML = `
     <div class="view-header" style="margin-bottom: 16px;">
       <div>
         <h1 class="view-title">Assign Leads</h1>
-        <span class="view-subtitle">// ${unassigned.length} total assignable</span>
+        <span class="view-subtitle">// ${unassigned.length} unassigned · ${autoNoReplyPool.length} automation no-reply</span>
       </div>
       <div style="display:flex;gap:8px">
         <button class="btn-cyan" onclick="navigate('drip')">Drip Feed Mode</button>
@@ -3597,10 +3645,11 @@ function renderAssignLeads() {
       <select id="bulk-type-select" class="form-input" style="width: 120px;"><option value="all">Any Type</option></select>
       <select id="bulk-state-select" class="form-input" style="width: 120px;"><option value="all">Any State</option></select>
       
-      <select id="bulk-lead-status-select" class="form-input" style="width: 160px;">
-        <option value="all">Any Status</option>
+      <select id="bulk-lead-status-select" class="form-input" style="width: 210px;">
+        <option value="all">Any Status (Unassigned)</option>
         <option value="new">New Leads Only</option>
         <option value="no_reply">No Reply (1st/2nd/3rd Contact)</option>
+        <option value="auto_no_reply">🤖 Automation No-Reply (${autoNoReplyPool.length})</option>
       </select>
       
       <select id="bulk-sort-select" class="form-input" style="width: 150px;">
@@ -3667,7 +3716,7 @@ function renderAssignLeads() {
     </div>
   `;
 
-  // 3. Internal Pointers
+  // Internal Pointers
   let currentPage = 1;
   const itemsPerPage = 25;
   const typeSelect = document.getElementById("bulk-type-select");
@@ -3680,6 +3729,12 @@ function renderAssignLeads() {
   const countDisplay = document.getElementById("bulk-type-count");
   const resetFiltersBtn = document.getElementById("assign-reset-filters");
 
+  // Returns the active base pool for the selected status mode
+  function getActiveBasePool() {
+    const mode = statusSelect ? statusSelect.value : "all";
+    return mode === "auto_no_reply" ? autoNoReplyPool : unassigned;
+  }
+
   // ==========================================
   // 🧠 CASCADING DROPDOWNS
   // ==========================================
@@ -3688,7 +3743,8 @@ function renderAssignLeads() {
     const currentType = typeSelect ? typeSelect.value : "all";
     const currentState = stateSelect ? stateSelect.value : "all";
 
-    const batchLeads = unassigned.filter(
+    const activePool = getActiveBasePool();
+    const batchLeads = activePool.filter(
       (l) => selectedBatch === "all" || l._batchId === selectedBatch,
     );
 
@@ -3729,7 +3785,7 @@ function renderAssignLeads() {
   }
 
   // ==========================================
-  // 🧠 TABLE RENDERING & MATH
+  // 🧠 TABLE RENDERING & MATH (WYSIWYG)
   // ==========================================
   function updateTableAndMath() {
     const selectedType = typeSelect ? typeSelect.value : "all";
@@ -3738,8 +3794,9 @@ function renderAssignLeads() {
     const selectedSort = sortSelect ? sortSelect.value : "newest";
     const selectedStatusFilter = statusSelect ? statusSelect.value : "all";
 
-    const filteredLeads = unassigned.filter(function (l) {
-      // 🚀 THE NEW STATUS FILTER LOGIC
+    const activePool = getActiveBasePool();
+
+    const filteredLeads = activePool.filter(function (l) {
       let passesStatusFilter = true;
       if (selectedStatusFilter === "new") {
         passesStatusFilter = l.status === "New";
@@ -3749,6 +3806,8 @@ function renderAssignLeads() {
           "2nd Contact",
           "3rd Contact",
         ].includes(l.status);
+      } else if (selectedStatusFilter === "auto_no_reply") {
+        passesStatusFilter = true; // Already filtered by isAutoNoReplyLead
       }
 
       return (
@@ -3797,7 +3856,9 @@ function renderAssignLeads() {
     document.getElementById("page-indicator").textContent =
       `Page ${currentPage} of ${totalPages}`;
     document.getElementById("table-meta-count").textContent =
-      `Showing ${total} leads matching filters`;
+      selectedStatusFilter === "auto_no_reply"
+        ? `Showing ${total} automation no-reply leads (re-typed to "No Reply Lead" on assign)`
+        : `Showing ${total} leads matching filters`;
 
     document.getElementById("btn-prev-page").disabled = currentPage === 1;
     document.getElementById("btn-prev-page").style.opacity =
@@ -3815,7 +3876,7 @@ function renderAssignLeads() {
 
     const tbody = document.getElementById("assign-tbody");
     if (displayLeads.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="5" class="empty-state">No unassigned leads match these filters!</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="5" class="empty-state">No leads match these filters!</td></tr>`;
     } else {
       tbody.innerHTML = displayLeads
         .map(function (lead) {
@@ -3827,16 +3888,20 @@ function renderAssignLeads() {
               ? `<span title="${escHtml(lead.previousAgents)}" style="font-size:10px; background:#f1f5f9; color:#64748b; padding:2px 6px; border-radius:4px; margin-left:8px; font-weight:600; cursor:help;">↺ ${prevArray.length} prev</span>`
               : "";
 
+          const ownerBadge = lead.assignedTo
+            ? `<span style="font-size:10px; background:#FEF3C7; color:#92400E; padding:2px 6px; border-radius:4px; margin-left:8px; font-weight:600;">From: ${escHtml(lead.assignedTo)}</span>`
+            : "";
+
           return `
         <tr>
           <td>
             <div style="display:flex; flex-direction:column;">
-              <div style="display:flex; align-items:center;">
-                <span class="lead-name">${escHtml(lead.name)}</span>${prevBadge}
+              <div style="display:flex; align-items:center; flex-wrap:wrap;">
+                <span class="lead-name">${escHtml(lead.name)}</span>${ownerBadge}${prevBadge}
               </div>
             </div>
           </td>
-          <td>${lead.leadType ? `<span class="lead-type-badge lead-type-${(lead.leadType || "").toLowerCase()}">${escHtml(lead.leadType)}</span>` : "—"}</td>
+          <td>${lead.leadType ? `<span class="lead-type-badge lead-type-${(lead.leadType || "").toLowerCase().replace(/\s+/g, "-")}">${escHtml(lead.leadType)}</span>` : "—"}</td>
           <td class="td-mono">${escHtml(lead.BTN || lead.btn || lead.phone || "—")}</td>
           <td><span class="status-badge status-${lead.status
             .toLowerCase()
@@ -3870,9 +3935,16 @@ function renderAssignLeads() {
     false,
   );
 
-  // 6. Attach Event Listeners
-  const triggers = [statusSelect, typeSelect, stateSelect, sortSelect];
-  triggers.forEach(
+  // Event Listeners
+  if (statusSelect) {
+    statusSelect.addEventListener("change", () => {
+      updateDynamicDropdowns();
+      currentPage = 1;
+      updateTableAndMath();
+    });
+  }
+
+  [typeSelect, stateSelect, sortSelect].forEach(
     (el) =>
       el &&
       el.addEventListener("change", () => {
@@ -3882,7 +3954,7 @@ function renderAssignLeads() {
   );
 
   // ==========================================
-  // 🚀 ACTION-BASED AGENT READINESS LISTENER (ADMIN CONTEXT AWARE)
+  // 🚀 ACTION-BASED AGENT READINESS LISTENER
   // ==========================================
   const agentSelect = document.getElementById("bulk-agent-select");
   const readinessBadge = document.getElementById("agent-readiness-badge");
@@ -3896,7 +3968,6 @@ function renderAssignLeads() {
         return;
       }
 
-      // 1. Identify if the selected agent is an Admin
       const targetContractor = (State.contractors || []).find(
         (c) => c.name === selectedAgent,
       );
@@ -3906,26 +3977,20 @@ function renderAssignLeads() {
           targetContractor.role === "admin" ||
           targetContractor.isAdmin === true);
 
-      // 2. Count leads requiring IMMEDIATE action
       const activeLeadsCount = State.leads.filter((lead) => {
         if (lead.assignedTo !== selectedAgent) return false;
         if (Config.terminalStatuses.includes(lead.status || "New"))
           return false;
 
-        // ACTION REQUIRED: Customer replied!
         if (lead.SMSUnread === true || lead.smsUnread === true) return true;
 
-        // ACTION REQUIRED: Past-due callback
         if (lead.callbackAt) {
           const cbTime = new Date(lead.callbackAt).getTime();
           const nowTime = new Date().getTime();
-          if (cbTime <= nowTime) return true; // Past due!
-          return false; // Future callback, ignore for now.
+          if (cbTime <= nowTime) return true;
+          return false;
         }
 
-        // 🚀 THE ADMIN WAITING ROOM:
-        // Only Admins get the "free pass" for contacted leads.
-        // Normal agents must actively work their assigned leads (calls, manual follow-up).
         const isContacted =
           lead.SMSContacted === true ||
           lead.SMSContacted === "true" ||
@@ -3933,10 +3998,9 @@ function renderAssignLeads() {
           lead.smsContacted === true;
 
         if (isContacted && isAgentAdmin) {
-          return false; // Admin is waiting for a reply.
+          return false;
         }
 
-        // COOL OFF SHIELD: If they are in manual call cool-off, ignore.
         if (
           typeof Graph !== "undefined" &&
           Graph.isInCoolOff &&
@@ -3944,7 +4008,6 @@ function renderAssignLeads() {
         )
           return false;
 
-        // UNWORKED: Needs action!
         return true;
       }).length;
 
@@ -3995,9 +4058,178 @@ function renderAssignLeads() {
     updateTableAndMath();
   });
 
-  // 7. Initial Draw
+  // Initial Draw
   updateDynamicDropdowns();
   updateTableAndMath();
+}
+
+async function bulkAssignToSelectedAgent() {
+  const agentSelect = document.getElementById("bulk-agent-select");
+  const agentName = agentSelect ? agentSelect.value : "";
+
+  const qtyInput = document.getElementById("bulk-agent-qty");
+  const qty = qtyInput ? parseInt(qtyInput.value, 10) : 0;
+
+  const typeSelect = document.getElementById("bulk-type-select");
+  const selectedType = typeSelect ? typeSelect.value : "all";
+
+  const stateSelect = document.getElementById("bulk-state-select");
+  const selectedState = stateSelect ? stateSelect.value : "all";
+
+  const batchSelect = document.getElementById("bulk-batch-select");
+  const selectedBatch = batchSelect ? batchSelect.value : "all";
+
+  const sortSelect = document.getElementById("bulk-sort-select");
+  const selectedSort = sortSelect ? sortSelect.value : "newest";
+
+  const statusSelect = document.getElementById("bulk-lead-status-select");
+  const selectedStatusFilter = statusSelect ? statusSelect.value : "all";
+
+  if (!agentName) {
+    if (typeof UI !== "undefined" && UI.showToast)
+      UI.showToast("Please select an agent first.", "warning");
+    return;
+  }
+  if (!qty || qty <= 0) {
+    if (typeof UI !== "undefined" && UI.showToast)
+      UI.showToast("Please enter a valid number of leads.", "warning");
+    return;
+  }
+
+  // 1. Get the EXACT same base pool as the table preview (WYSIWYG)
+  const basePool =
+    selectedStatusFilter === "auto_no_reply"
+      ? State.leads.filter(isAutoNoReplyLead)
+      : State.leads.filter(function (l) {
+          const isValidLead =
+            l && l.id && (l.name || l.phone || l.BTN || l.btn);
+          const isAvailable =
+            !l.assignedTo && !Config.terminalStatuses.includes(l.status);
+          return isValidLead && isAvailable;
+        });
+
+  // 2. Filter using the EXACT same rules as the table preview
+  const validLeads = basePool.filter(function (l) {
+    let statusMatch = true;
+    if (selectedStatusFilter === "new") {
+      statusMatch = l.status === "New";
+    } else if (selectedStatusFilter === "no_reply") {
+      statusMatch = ["1st Contact", "2nd Contact", "3rd Contact"].includes(
+        l.status,
+      );
+    }
+
+    const typeMatch =
+      selectedType === "all" ||
+      (l.leadType && l.leadType.toLowerCase() === selectedType.toLowerCase());
+    const stateMatch =
+      selectedState === "all" ||
+      (l.state && l.state.toUpperCase() === selectedState.toUpperCase());
+
+    const batchMatch = selectedBatch === "all" || l._batchId === selectedBatch;
+
+    // Make sure the selected agent hasn't worked this lead before & isn't already assigned to it
+    const prevAgents = (l.previousAgents || "").toLowerCase();
+    const alreadyOwnedByTarget =
+      (l.assignedTo || "").toLowerCase().trim() ===
+      agentName.toLowerCase().trim();
+    const agentMatch =
+      !prevAgents.includes(agentName.toLowerCase()) && !alreadyOwnedByTarget;
+
+    return statusMatch && typeMatch && stateMatch && batchMatch && agentMatch;
+  });
+
+  // 3. Sort using the EXACT same rules as the table preview
+  validLeads.sort((a, b) => {
+    const countA = a.previousAgents
+      ? a.previousAgents.split(",").filter((x) => x.trim()).length
+      : 0;
+    const countB = b.previousAgents
+      ? b.previousAgents.split(",").filter((x) => x.trim()).length
+      : 0;
+
+    if (selectedSort === "least_worked") {
+      return (
+        countA - countB ||
+        new Date(b.createdAt || 0) - new Date(a.createdAt || 0)
+      );
+    } else if (selectedSort === "most_worked") {
+      return (
+        countB - countA ||
+        new Date(b.createdAt || 0) - new Date(a.createdAt || 0)
+      );
+    } else {
+      return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
+    }
+  });
+
+  const isNoReplyAssign =
+    selectedStatusFilter === "no_reply" ||
+    selectedStatusFilter === "auto_no_reply";
+
+  const statusLabel = isNoReplyAssign ? "No Reply " : "";
+  const stateLabel = selectedState === "all" ? "" : `${selectedState} `;
+  const typeLabel = selectedType === "all" ? "leads" : `${selectedType} leads`;
+  const combinedLabel = `${statusLabel}${stateLabel}${typeLabel}`.trim();
+
+  // 4. Validation Checks
+  if (validLeads.length === 0) {
+    if (typeof UI !== "undefined" && UI.showToast) {
+      UI.showToast(
+        `${agentName} has no available ${combinedLabel} left to work with these filters!`,
+        "warning",
+      );
+    }
+    return;
+  }
+
+  if (qty > validLeads.length) {
+    if (typeof UI !== "undefined" && UI.showToast) {
+      UI.showToast(
+        `Only ${validLeads.length} ${combinedLabel} available for ${agentName} (already worked the rest).`,
+        "warning",
+      );
+    }
+    return;
+  }
+
+  // 5. Slice from the sorted top & patch SharePoint
+  const leadsToAssign = validLeads.slice(0, qty);
+
+  if (typeof setLoading === "function") setLoading(true);
+  try {
+    await Promise.all(
+      leadsToAssign.map(async (lead) => {
+        const patchFields = { Agent_x0020_Assigned: agentName };
+
+        // 🚀 Re-type to "No Reply Lead" when assigning No Reply / Automation No-Reply leads
+        if (isNoReplyAssign) {
+          patchFields.Lead_x0020_Type = "No Reply Lead";
+        }
+
+        await Graph.updateLead(lead.id, patchFields);
+        lead.assignedTo = agentName;
+        if (isNoReplyAssign) {
+          lead.leadType = "No Reply Lead";
+        }
+      }),
+    );
+
+    if (typeof UI !== "undefined" && UI.showToast) {
+      UI.showToast(
+        `Successfully assigned ${qty} ${combinedLabel} to ${agentName}!`,
+        "success",
+      );
+    }
+    if (typeof renderAssignLeads === "function") renderAssignLeads();
+  } catch (err) {
+    console.error("Bulk Assign Error:", err);
+    if (typeof UI !== "undefined" && UI.showToast) {
+      UI.showToast("Failed to assign leads: " + err.message, "error");
+    }
+  } finally {
+    if (typeof setLoading === "function") setLoading(false);
+  }
 }
 
 async function assignLead(leadId) {
@@ -4036,162 +4268,86 @@ async function assignLead(leadId) {
   }
 }
 
-async function bulkAssignToSelectedAgent() {
-  const agentSelect = document.getElementById("bulk-agent-select");
-  const agentName = agentSelect ? agentSelect.value : "";
-
-  const qtyInput = document.getElementById("bulk-agent-qty");
-  const qty = qtyInput ? parseInt(qtyInput.value, 10) : 0;
-
-  const typeSelect = document.getElementById("bulk-type-select");
-  const selectedType = typeSelect ? typeSelect.value : "all";
-
-  const stateSelect = document.getElementById("bulk-state-select");
-  const selectedState = stateSelect ? stateSelect.value : "all";
-
-  const batchSelect = document.getElementById("bulk-batch-select");
-  const selectedBatch = batchSelect ? batchSelect.value : "all";
-
-  const sortSelect = document.getElementById("bulk-sort-select");
-  const selectedSort = sortSelect ? sortSelect.value : "newest";
-
-  // 🚀 GRAB NEW STATUS FILTER
-  const statusSelect = document.getElementById("bulk-lead-status-select");
-  const selectedStatusFilter = statusSelect ? statusSelect.value : "all";
-
-  if (!agentName) {
-    if (typeof UI !== "undefined" && UI.showToast)
-      UI.showToast("Please select an agent first.", "warning");
-    return;
-  }
-  if (!qty || qty <= 0) {
-    if (typeof UI !== "undefined" && UI.showToast)
-      UI.showToast("Please enter a valid number of leads.", "warning");
-    return;
-  }
-
-  // 1. Get the base unassigned pool (Must be unassigned & not dead)
-  const unassigned = State.leads.filter(function (l) {
-    const isValidLead = l && l.id && (l.name || l.phone || l.BTN || l.btn);
-    // 🚀 CRITICAL BOUNCER: Must be unassigned (we don't rip leads) AND not a terminal status
-    const isAvailable =
-      !l.assignedTo && !Config.terminalStatuses.includes(l.status);
-    return isValidLead && isAvailable;
-  });
-
-  // 2. Filter using the EXACT same rules as the table preview
-  const validLeads = unassigned.filter(function (l) {
-    // 🚀 STATUS MATCH LOGIC
-    let statusMatch = true;
-    if (selectedStatusFilter === "new") {
-      statusMatch = l.status === "New";
-    } else if (selectedStatusFilter === "no_reply") {
-      statusMatch = ["1st Contact", "2nd Contact", "3rd Contact"].includes(
-        l.status,
-      );
-    }
-
-    const typeMatch =
-      selectedType === "all" ||
-      (l.leadType && l.leadType.toLowerCase() === selectedType.toLowerCase());
-    const stateMatch =
-      selectedState === "all" ||
-      (l.state && l.state.toUpperCase() === selectedState.toUpperCase());
-
-    const batchMatch = selectedBatch === "all" || l._batchId === selectedBatch;
-
-    // 🛑 CRITICAL BOUNCER: Make sure the selected agent hasn't worked this lead before!
-    const prevAgents = (l.previousAgents || "").toLowerCase();
-    const agentMatch = !prevAgents.includes(agentName.toLowerCase());
-
-    return statusMatch && typeMatch && stateMatch && batchMatch && agentMatch;
-  });
-
-  // 3. SORT USING THE EXACT SAME RULES AS THE TABLE PREVIEW 🚀
-  validLeads.sort((a, b) => {
-    const countA = a.previousAgents
-      ? a.previousAgents.split(",").filter((x) => x.trim()).length
-      : 0;
-    const countB = b.previousAgents
-      ? b.previousAgents.split(",").filter((x) => x.trim()).length
-      : 0;
-
-    if (selectedSort === "least_worked") {
-      return (
-        countA - countB ||
-        new Date(b.createdAt || 0) - new Date(a.createdAt || 0)
-      );
-    } else if (selectedSort === "most_worked") {
-      return (
-        countB - countA ||
-        new Date(b.createdAt || 0) - new Date(a.createdAt || 0)
-      );
-    } else {
-      return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
-    }
-  });
-
-  const statusLabel = selectedStatusFilter === "no_reply" ? "No Reply " : "";
-  const stateLabel = selectedState === "all" ? "" : `${selectedState} `;
-  const typeLabel = selectedType === "all" ? "leads" : `${selectedType} leads`;
-  const combinedLabel = `${statusLabel}${stateLabel}${typeLabel}`.trim();
-
-  // 4. Validation Checks
-  if (validLeads.length === 0) {
-    if (typeof UI !== "undefined" && UI.showToast) {
-      UI.showToast(
-        `${agentName} has no available ${combinedLabel} left to work with these filters!`,
-        "warning",
-      );
-    }
-    return;
-  }
-
-  if (qty > validLeads.length) {
-    if (typeof UI !== "undefined" && UI.showToast) {
-      UI.showToast(
-        `Only ${validLeads.length} ${combinedLabel} available for ${agentName} (already worked the rest).`,
-        "warning",
-      );
-    }
-    return;
-  }
-
-  // 5. Slice from the newly sorted top!
-  const leadsToAssign = validLeads.slice(0, qty);
-
-  if (typeof setLoading === "function") setLoading(true);
-  try {
-    await Promise.all(
-      leadsToAssign.map(async (lead) => {
-        await Graph.updateLead(lead.id, { Agent_x0020_Assigned: agentName });
-        lead.assignedTo = agentName;
-      }),
-    );
-
-    if (typeof UI !== "undefined" && UI.showToast) {
-      UI.showToast(
-        `Successfully assigned ${qty} ${combinedLabel} to ${agentName}!`,
-        "success",
-      );
-    }
-    if (typeof renderAssignLeads === "function") renderAssignLeads();
-  } catch (err) {
-    console.error("Bulk Assign Error:", err);
-    if (typeof UI !== "undefined" && UI.showToast) {
-      UI.showToast("Failed to assign leads: " + err.message, "error");
-    }
-  } finally {
-    if (typeof setLoading === "function") setLoading(false);
-  }
-}
-
 async function bulkAssignByQuantity() {
   const { leads, contractors } = State;
-  const unassigned = leads.filter(function (l) {
-    return !l.assignedTo && !Config.terminalStatuses.includes(l.status);
-  });
 
+  // 1. Read the active WYSIWYG filters from the Assign Leads screen
+  const selectedStatusFilter =
+    (document.getElementById("bulk-lead-status-select") || {}).value || "all";
+  const selectedType =
+    (document.getElementById("bulk-type-select") || {}).value || "all";
+  const selectedState =
+    (document.getElementById("bulk-state-select") || {}).value || "all";
+  const selectedBatch =
+    (document.getElementById("bulk-batch-select") || {}).value || "all";
+  const selectedSort =
+    (document.getElementById("bulk-sort-select") || {}).value || "newest";
+
+  const isNoReplyAssign =
+    selectedStatusFilter === "no_reply" ||
+    selectedStatusFilter === "auto_no_reply";
+
+  // 2. Build the exact same base pool as renderAssignLeads()
+  const basePool =
+    selectedStatusFilter === "auto_no_reply"
+      ? leads.filter(isAutoNoReplyLead)
+      : leads.filter(function (l) {
+          const isValidLead =
+            l && l.id && (l.name || l.phone || l.BTN || l.btn);
+          return (
+            isValidLead &&
+            !l.assignedTo &&
+            !Config.terminalStatuses.includes(l.status)
+          );
+        });
+
+  // 3. Apply the exact same filters & sort order as the table preview
+  const filteredPool = basePool
+    .filter(function (l) {
+      let statusMatch = true;
+      if (selectedStatusFilter === "new") {
+        statusMatch = l.status === "New";
+      } else if (selectedStatusFilter === "no_reply") {
+        statusMatch = ["1st Contact", "2nd Contact", "3rd Contact"].includes(
+          l.status,
+        );
+      }
+
+      const typeMatch =
+        selectedType === "all" ||
+        (l.leadType && l.leadType.toLowerCase() === selectedType.toLowerCase());
+      const stateMatch =
+        selectedState === "all" ||
+        (l.state && l.state.toUpperCase() === selectedState.toUpperCase());
+      const batchMatch =
+        selectedBatch === "all" || l._batchId === selectedBatch;
+
+      return statusMatch && typeMatch && stateMatch && batchMatch;
+    })
+    .sort(function (a, b) {
+      const countA = a.previousAgents
+        ? a.previousAgents.split(",").filter((x) => x.trim()).length
+        : 0;
+      const countB = b.previousAgents
+        ? b.previousAgents.split(",").filter((x) => x.trim()).length
+        : 0;
+
+      if (selectedSort === "least_worked") {
+        return (
+          countA - countB ||
+          new Date(b.createdAt || 0) - new Date(a.createdAt || 0)
+        );
+      }
+      if (selectedSort === "most_worked") {
+        return (
+          countB - countA ||
+          new Date(b.createdAt || 0) - new Date(a.createdAt || 0)
+        );
+      }
+      return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
+    });
+
+  // 4. Collect requested quantities per agent
   const plan = [];
   contractors.forEach(function (c) {
     const qty =
@@ -4208,16 +4364,50 @@ async function bulkAssignByQuantity() {
   const totalRequested = plan.reduce(function (s, p) {
     return s + p.qty;
   }, 0);
-  if (totalRequested > unassigned.length) {
+
+  if (totalRequested > filteredPool.length) {
     UI.showToast(
       "Total (" +
         totalRequested +
-        ") exceeds unassigned leads (" +
-        unassigned.length +
+        ") exceeds matching leads (" +
+        filteredPool.length +
         "). Reduce quantities.",
       "error",
     );
     return;
+  }
+
+  // 5. Pre-allocate leads from the sorted top (skips leads already owned by or previously worked by that agent)
+  const assignments = [];
+  const usedIds = new Set();
+
+  for (let p = 0; p < plan.length; p++) {
+    const targetAgent = plan[p].agent;
+    const targetLower = targetAgent.toLowerCase().trim();
+    let picked = 0;
+
+    for (let i = 0; i < filteredPool.length && picked < plan[p].qty; i++) {
+      const lead = filteredPool[i];
+      if (usedIds.has(lead.id)) continue;
+
+      const prevAgents = (lead.previousAgents || "").toLowerCase();
+      const alreadyOwned =
+        (lead.assignedTo || "").toLowerCase().trim() === targetLower;
+
+      if (alreadyOwned || prevAgents.includes(targetLower)) continue;
+
+      usedIds.add(lead.id);
+      assignments.push({ lead: lead, agent: targetAgent });
+      picked++;
+    }
+
+    if (picked < plan[p].qty) {
+      UI.showToast(
+        `Only ${picked} eligible lead(s) available for ${targetAgent} (already owns or previously worked the rest).`,
+        "warning",
+      );
+      return;
+    }
   }
 
   const summary = plan
@@ -4225,29 +4415,43 @@ async function bulkAssignByQuantity() {
       return p.qty + " → " + p.agent;
     })
     .join("\n");
+
+  const retypeNotice = isNoReplyAssign
+    ? '\n\n⚠️ Lead Type will be updated to "No Reply Lead".'
+    : "";
+
   if (
     !confirm(
       "Assign leads by quantity?\n\n" +
         summary +
         "\n\nTotal: " +
         totalRequested +
-        " leads",
+        " leads" +
+        retypeNotice,
     )
-  )
+  ) {
     return;
+  }
 
+  // 6. Execute assignments (+ re-type to "No Reply Lead" when applicable)
   setLoading(true);
   try {
-    let idx = 0;
-    for (var p = 0; p < plan.length; p++) {
-      for (var q = 0; q < plan[p].qty; q++) {
-        if (idx >= unassigned.length) break;
-        await Graph.assignAgent(unassigned[idx].id, plan[p].agent);
-        idx++;
+    for (let i = 0; i < assignments.length; i++) {
+      const { lead, agent } = assignments[i];
+      await Graph.assignAgent(lead.id, agent);
+
+      if (isNoReplyAssign) {
+        await Graph.updateLead(lead.id, { Lead_x0020_Type: "No Reply Lead" });
+        lead.leadType = "No Reply Lead";
       }
+      lead.assignedTo = agent;
     }
+
     UI.showToast(
-      "Assigned " + totalRequested + " leads successfully!",
+      "Assigned " +
+        totalRequested +
+        (isNoReplyAssign ? " No Reply" : "") +
+        " leads successfully!",
       "success",
     );
     await loadAllData();
