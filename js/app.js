@@ -1904,6 +1904,9 @@ function renderMyLeads(tab = window._currentMyLeadsTab) {
 
   if (typeof _leadSaved === "undefined") window._leadSaved = false;
 
+  // Backwards-compatibility if any other caller still passes "standard"
+  if (tab === "standard") tab = "nr_leads";
+
   // 🔧 FIX: Reset the actual _currentFeedIndex variable (not window._currentFeedIndex)
   if (!window._forceShowLead) {
     _currentFeedIndex = 0;
@@ -1980,8 +1983,15 @@ function renderMyLeads(tab = window._currentMyLeadsTab) {
       ""
     ).trim();
     const isTT = typeStr === "TT Leads";
+    const isNR = typeStr.toLowerCase() === "no reply lead";
 
-    if (!l.verifiedYes && l.status !== "Yes" && !isManualFollowUp && !isTT)
+    if (
+      !l.verifiedYes &&
+      l.status !== "Yes" &&
+      !isManualFollowUp &&
+      !isTT &&
+      !isNR
+    )
       return false;
 
     const assigned = (l.assignedTo || "")
@@ -2083,6 +2093,7 @@ function renderMyLeads(tab = window._currentMyLeadsTab) {
       ""
     ).trim();
     const isTT = typeStr === "TT Leads";
+    const isNRType = typeStr.toLowerCase() === "no reply lead";
 
     const isCallbackDue =
       l.callbackAt && new Date(l.callbackAt).getTime() <= fiveMinsFromNow;
@@ -2096,13 +2107,14 @@ function renderMyLeads(tab = window._currentMyLeadsTab) {
         l.SMSContacted === "true");
 
     const isYes = !isTT && l.status === "Yes";
-    const isFresh = l.status === "New" && !isSmsContacted;
+    const isFresh = l.status === "New" && !isSmsContacted && !isNRType;
 
-    // 🔧 FIX: Keep TT Leads out of No Reply so 1st/2nd/3rd Contact TT leads return to the agent's CA Trouble List after cool-off
+    // 🔧 FIX: Keep TT Leads out of No Reply so 1st/2nd/3rd Contact TT leads return to CA Trouble List after cool-off
     const isNoReply =
       !isTT &&
-      ((["1st Contact", "2nd Contact", "3rd Contact"].includes(l.status) &&
-        !l.verifiedYes) ||
+      (isNRType ||
+        (["1st Contact", "2nd Contact", "3rd Contact"].includes(l.status) &&
+          !l.verifiedYes) ||
         (l.status === "New" && isSmsContacted));
 
     if (isCallbackDue) {
@@ -2135,16 +2147,18 @@ function renderMyLeads(tab = window._currentMyLeadsTab) {
   buckets.new.sort((a, b) => a.id.localeCompare(b.id));
 
   // ==========================================
-  // 🛑 3. AGENT DUAL-QUEUE OR ADMIN 5-TAB QUEUE
+  // 🛑 3. AGENT DUAL-QUEUE (NR LEADS / CA TT) OR ADMIN 5-TAB QUEUE
   // ==========================================
+  // Include buckets.noreply so reassigned "No Reply Lead"s appear in the agent's NR Leads tab
   const rawAgentQueue = [
     ...buckets.callbacks,
     ...buckets.new,
     ...buckets.yes,
     ...buckets.followup,
+    ...buckets.noreply,
   ];
 
-  const standardQueue = rawAgentQueue.filter((l) => {
+  const nrLeadsQueue = rawAgentQueue.filter((l) => {
     const typeStr = (
       l.leadType ||
       l.Lead_x0020_Type ||
@@ -2164,13 +2178,68 @@ function renderMyLeads(tab = window._currentMyLeadsTab) {
     return typeStr === "TT Leads";
   });
 
-  const standardQueueCount = standardQueue.length;
+  const nrQueueCount = nrLeadsQueue.length;
   const ttQueueCount = ttLeadsQueue.length;
 
   let myLeads;
 
   if (window._forceShowLead && window._myLeads && window._myLeads.length > 0) {
     myLeads = window._myLeads;
+    if (_currentFeedIndex >= myLeads.length || _currentFeedIndex < 0) {
+      _currentFeedIndex = 0;
+    }
+
+    // 🎯 Auto-resolve & highlight the matching tab for the searched/forced lead
+    const forcedLead = myLeads[_currentFeedIndex];
+    if (forcedLead) {
+      const fType = (
+        forcedLead.leadType ||
+        forcedLead.Lead_x0020_Type ||
+        forcedLead.LeadType ||
+        ""
+      ).trim();
+      const fIsTT = fType === "TT Leads";
+      const fIsNRType = fType.toLowerCase() === "no reply lead";
+
+      if (!userIsAdmin) {
+        tab = fIsTT ? "tt_leads" : "nr_leads";
+      } else {
+        const fSmsContacted =
+          !fIsTT &&
+          (forcedLead.SMSContacted === true ||
+            forcedLead.smsContacted === true ||
+            forcedLead.SMSContacted === "Yes" ||
+            forcedLead.SMSContacted === "true");
+        const fUnread =
+          !fIsTT &&
+          (forcedLead.SMSUnread === true || forcedLead.smsUnread === true);
+
+        if (forcedLead.callbackAt) {
+          tab = "callbacks";
+        } else if (fUnread || (!fIsTT && forcedLead.status === "Yes")) {
+          tab = "yes";
+        } else if (
+          forcedLead.status === "New" &&
+          !fSmsContacted &&
+          !fIsNRType
+        ) {
+          tab = "new";
+        } else if (
+          !fIsTT &&
+          (fIsNRType ||
+            (["1st Contact", "2nd Contact", "3rd Contact"].includes(
+              forcedLead.status,
+            ) &&
+              !forcedLead.verifiedYes) ||
+            (forcedLead.status === "New" && fSmsContacted))
+        ) {
+          tab = "noreply";
+        } else {
+          tab = "followup";
+        }
+      }
+      window._currentMyLeadsTab = tab;
+    }
   } else {
     if (userIsAdmin) {
       if (
@@ -2186,11 +2255,12 @@ function renderMyLeads(tab = window._currentMyLeadsTab) {
       window._currentMyLeadsTab = tab;
       myLeads = buckets[tab] || [];
     } else {
-      if (!tab || !["standard", "tt_leads"].includes(tab)) {
-        tab = "standard";
+      if (!tab || !["nr_leads", "tt_leads"].includes(tab)) {
+        tab =
+          nrQueueCount === 0 && ttQueueCount > 0 ? "tt_leads" : "nr_leads";
       }
       window._currentMyLeadsTab = tab;
-      myLeads = tab === "tt_leads" ? ttLeadsQueue : standardQueue;
+      myLeads = tab === "tt_leads" ? ttLeadsQueue : nrLeadsQueue;
     }
     window._myLeads = myLeads;
   }
@@ -2228,12 +2298,12 @@ function renderMyLeads(tab = window._currentMyLeadsTab) {
       tabContainer.style.display = "flex";
       tabContainer.innerHTML = "";
 
-      const tabStandard = document.createElement("div");
-      tabStandard.id = "tab-ml-standard";
-      tabStandard.onclick = () => renderMyLeads("standard");
-      tabStandard.style.cssText =
+      const tabNR = document.createElement("div");
+      tabNR.id = "tab-ml-nr";
+      tabNR.onclick = () => renderMyLeads("nr_leads");
+      tabNR.style.cssText =
         "font-weight: 600; cursor: pointer; padding-bottom: 12px; transition: all 0.2s; border-bottom: 2px solid transparent; white-space: nowrap;";
-      tabStandard.innerHTML = `Standard Queue <span id="badge-ml-standard" style="background: #e2e8f0; color: #475569; padding: 2px 8px; border-radius: 12px; font-size: 11px; margin-left: 6px;">0</span>`;
+      tabNR.innerHTML = `NR Leads <span id="badge-ml-nr" style="background: #e2e8f0; color: #475569; padding: 2px 8px; border-radius: 12px; font-size: 11px; margin-left: 6px;">0</span>`;
 
       const tabTT = document.createElement("div");
       tabTT.id = "tab-ml-tt";
@@ -2242,17 +2312,19 @@ function renderMyLeads(tab = window._currentMyLeadsTab) {
         "font-weight: 600; cursor: pointer; padding-bottom: 12px; transition: all 0.2s; border-bottom: 2px solid transparent; white-space: nowrap;";
       tabTT.innerHTML = `CA Trouble List <span id="badge-ml-tt" style="background: #FEF3C7; color: #92400E; padding: 2px 8px; border-radius: 12px; font-size: 11px; margin-left: 6px;">0</span>`;
 
-      tabContainer.appendChild(tabStandard);
+      tabContainer.appendChild(tabNR);
       tabContainer.appendChild(tabTT);
 
       if (tab === "tt_leads") {
         tabTT.style.color = "var(--text-1)";
         tabTT.style.borderBottomColor = "#F59E0B";
-        tabStandard.style.color = "var(--text-2)";
+        tabNR.style.color = "var(--text-2)";
+        tabNR.style.borderBottomColor = "transparent";
       } else {
-        tabStandard.style.color = "var(--text-1)";
-        tabStandard.style.borderBottomColor = "#38bdf8";
+        tabNR.style.color = "var(--text-1)";
+        tabNR.style.borderBottomColor = "#38bdf8";
         tabTT.style.color = "var(--text-2)";
+        tabTT.style.borderBottomColor = "transparent";
       }
 
       const updateBadge = (id, count) => {
@@ -2262,7 +2334,7 @@ function renderMyLeads(tab = window._currentMyLeadsTab) {
           b.style.opacity = count > 0 ? "1" : "0.3";
         }
       };
-      updateBadge("badge-ml-standard", standardQueueCount);
+      updateBadge("badge-ml-nr", nrQueueCount);
       updateBadge("badge-ml-tt", ttQueueCount);
     } else {
       let noreplyTab = clone.getElementById("tab-ml-noreply");
@@ -2325,7 +2397,7 @@ function renderMyLeads(tab = window._currentMyLeadsTab) {
     if (subtitleEl) {
       subtitleEl.textContent = userIsAdmin
         ? `// 0 remaining in this tab`
-        : `// 0 leads remaining in ${tab === "tt_leads" ? "CA Trouble List" : "Standard Queue"}`;
+        : `// 0 leads remaining in ${tab === "tt_leads" ? "CA Trouble List" : "NR Leads"}`;
     }
 
     if (feedWrap) {
@@ -2426,10 +2498,12 @@ function searchMyLeads(q) {
   }
 
   const queryLower = q.trim().toLowerCase();
+  const queryDigits = q.replace(/\D/g, "");
+  const normDigits = (v) => String(v || "").replace(/\D/g, "");
+
   const toggleEl = document.getElementById("toggle-search-all");
   const searchAll = toggleEl ? toggleEl.checked : true;
 
-  // Grab the current agent's identity (matching the logic from your render function)
   const agentName = (window._agentName || "")
     .toLowerCase()
     .replace(/\s+/g, " ");
@@ -2440,7 +2514,6 @@ function searchMyLeads(q) {
     .toLowerCase()
     .replace(/\s+/g, " ");
 
-  // THE FIX: Always search the master database so we catch cool-off and terminal leads!
   const filtered = (State.leads || []).filter((l) => {
     const assigned = (l.assignedTo || "")
       .toLowerCase()
@@ -2450,10 +2523,8 @@ function searchMyLeads(q) {
     let passesAssignmentFilter = false;
 
     if (searchAll) {
-      // Searching everything: just verify it's assigned to someone
       passesAssignmentFilter = assigned !== "";
     } else {
-      // Searching "My Leads": verify it belongs to THIS agent specifically
       passesAssignmentFilter =
         assigned &&
         (assigned === agentName ||
@@ -2461,24 +2532,28 @@ function searchMyLeads(q) {
           assigned === userEmail);
     }
 
+    const rawPhone = String(l.phone || "");
+    const rawBtn = String(l.btn || l.BTN || "");
+    const rawCbr = String(l.cbr || l.CBR || "");
+
     const matchesSearch =
       (l.name && l.name.toLowerCase().includes(queryLower)) ||
-      (l.phone && l.phone.includes(queryLower)) ||
-      (l.btn && l.btn.includes(queryLower)) ||
-      (l.cbr && l.cbr.includes(queryLower)) ||
+      rawPhone.toLowerCase().includes(queryLower) ||
+      rawBtn.toLowerCase().includes(queryLower) ||
+      rawCbr.toLowerCase().includes(queryLower) ||
+      (queryDigits.length >= 3 &&
+        (normDigits(rawPhone).includes(queryDigits) ||
+          normDigits(rawBtn).includes(queryDigits) ||
+          normDigits(rawCbr).includes(queryDigits))) ||
       (l.address && l.address.toLowerCase().includes(queryLower));
 
     return passesAssignmentFilter && matchesSearch;
   });
 
   if (filtered.length) {
-    // THE QOL UPGRADE: Slice down to 25 max for instant rendering
     const displayLeads = filtered.slice(0, 25);
-
-    // Draw the table
     wrap.replaceChildren(renderLeadsTable(displayLeads, false, true));
 
-    // Add a helpful hint if we truncated the list
     if (filtered.length > 25) {
       const hint = document.createElement("div");
       hint.style.cssText =
@@ -3500,6 +3575,11 @@ function isAutoNoReplyLead(l) {
   if (!l || !l.id || !(l.name || l.phone || l.BTN || l.btn)) return false;
   if (Config.terminalStatuses.includes(l.status)) return false;
 
+  // Don't re-pull leads already converted or with active callbacks
+  if ((l.leadType || "").toLowerCase().trim() === "no reply lead") return false;
+  if (l.callbackAt) return false;
+
+  // 1. Confirm we reached out via automation
   const isSmsContacted =
     l.SMSContacted === true ||
     l.SMSContacted === "true" ||
@@ -3508,16 +3588,41 @@ function isAutoNoReplyLead(l) {
 
   if (!isSmsContacted) return false;
 
-  // Exclude leads that replied or were verified Yes
+  // 2. Exclude leads with reply flags
+  const stLower = (l.status || "").toLowerCase().trim();
   const hasReplied =
     l.SMSUnread === true ||
     l.smsUnread === true ||
+    l.SMSReplied === true ||
+    l.smsReplied === true ||
     l.verifiedYes === true ||
-    l.status === "Yes";
+    Boolean(l.lastInboundAt) ||
+    stLower === "yes" ||
+    stLower === "replied";
 
   if (hasReplied) return false;
 
-  // Only allow pulling from Steph / Admins (or unassigned) — never rip from regular agents
+  // 3. Optional memory-only check (only if State.smsHistory is already in RAM)
+  if (Array.isArray(State.smsHistory) && State.smsHistory.length > 0) {
+    const norm = (v) => String(v || "").replace(/\D/g, "").slice(-10);
+    const lPhone = norm(l.cbr || l.CBR || l.phone || l.btn || l.BTN);
+
+    const hasInbound = State.smsHistory.some((m) => {
+      const f = m.fields || m;
+      const dir = String(f.direction || f.Direction || f.type || "").toLowerCase();
+      if (!/^(in|inbound|incoming|received|reply)$/.test(dir)) return false;
+
+      const mLeadId = String(f.leadId || f.LeadID || f.relatedLeadId || "").trim();
+      if (mLeadId && mLeadId === String(l.id).trim()) return true;
+
+      const mPhone = norm(f.customerPhone || f.phone || f.from || f.CBR);
+      return Boolean(lPhone && mPhone && lPhone === mPhone);
+    });
+
+    if (hasInbound) return false;
+  }
+
+  // 4. Ownership bouncer: Steph, Admin, or unassigned
   const assigned = (l.assignedTo || "").trim();
   if (!assigned) return true;
 
@@ -3529,9 +3634,9 @@ function isAutoNoReplyLead(l) {
   );
   return Boolean(
     owner &&
-    (owner.role === "Admin" ||
-      owner.role === "admin" ||
-      owner.isAdmin === true),
+      (owner.role === "Admin" ||
+        owner.role === "admin" ||
+        owner.isAdmin === true),
   );
 }
 
@@ -4271,7 +4376,6 @@ async function assignLead(leadId) {
 async function bulkAssignByQuantity() {
   const { leads, contractors } = State;
 
-  // 1. Read the active WYSIWYG filters from the Assign Leads screen
   const selectedStatusFilter =
     (document.getElementById("bulk-lead-status-select") || {}).value || "all";
   const selectedType =
@@ -4287,13 +4391,12 @@ async function bulkAssignByQuantity() {
     selectedStatusFilter === "no_reply" ||
     selectedStatusFilter === "auto_no_reply";
 
-  // 2. Build the exact same base pool as renderAssignLeads()
+  // 1. WYSIWYG Base Pool
   const basePool =
     selectedStatusFilter === "auto_no_reply"
       ? leads.filter(isAutoNoReplyLead)
       : leads.filter(function (l) {
-          const isValidLead =
-            l && l.id && (l.name || l.phone || l.BTN || l.btn);
+          const isValidLead = l && l.id && (l.name || l.phone || l.BTN || l.btn);
           return (
             isValidLead &&
             !l.assignedTo &&
@@ -4301,7 +4404,7 @@ async function bulkAssignByQuantity() {
           );
         });
 
-  // 3. Apply the exact same filters & sort order as the table preview
+  // 2. Exact same filters & sort order as table preview
   const filteredPool = basePool
     .filter(function (l) {
       let statusMatch = true;
@@ -4347,11 +4450,11 @@ async function bulkAssignByQuantity() {
       return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
     });
 
-  // 4. Collect requested quantities per agent
+  // 3. Tally Quantities
   const plan = [];
   contractors.forEach(function (c) {
     const qty =
-      parseInt((document.getElementById("qty-" + c.name) || {}).value || "0") ||
+      parseInt((document.getElementById("qty-" + c.name) || {}).value || "0", 10) ||
       0;
     if (qty > 0) plan.push({ agent: c.name, qty: qty });
   });
@@ -4361,23 +4464,16 @@ async function bulkAssignByQuantity() {
     return;
   }
 
-  const totalRequested = plan.reduce(function (s, p) {
-    return s + p.qty;
-  }, 0);
-
+  const totalRequested = plan.reduce((s, p) => s + p.qty, 0);
   if (totalRequested > filteredPool.length) {
     UI.showToast(
-      "Total (" +
-        totalRequested +
-        ") exceeds matching leads (" +
-        filteredPool.length +
-        "). Reduce quantities.",
+      `Total (${totalRequested}) exceeds matching leads (${filteredPool.length}). Reduce quantities.`,
       "error",
     );
     return;
   }
 
-  // 5. Pre-allocate leads from the sorted top (skips leads already owned by or previously worked by that agent)
+  // 4. Pre-allocate from sorted top (skip previous agents & self-reassigns)
   const assignments = [];
   const usedIds = new Set();
 
@@ -4390,14 +4486,17 @@ async function bulkAssignByQuantity() {
       const lead = filteredPool[i];
       if (usedIds.has(lead.id)) continue;
 
-      const prevAgents = (lead.previousAgents || "").toLowerCase();
+      const prevList = (lead.previousAgents || "")
+        .split(",")
+        .map((x) => x.toLowerCase().trim())
+        .filter(Boolean);
       const alreadyOwned =
         (lead.assignedTo || "").toLowerCase().trim() === targetLower;
 
-      if (alreadyOwned || prevAgents.includes(targetLower)) continue;
+      if (alreadyOwned || prevList.includes(targetLower)) continue;
 
       usedIds.add(lead.id);
-      assignments.push({ lead: lead, agent: targetAgent });
+      assignments.push({ lead, agent: targetAgent });
       picked++;
     }
 
@@ -4410,55 +4509,62 @@ async function bulkAssignByQuantity() {
     }
   }
 
-  const summary = plan
-    .map(function (p) {
-      return p.qty + " → " + p.agent;
-    })
-    .join("\n");
-
+  const summary = plan.map((p) => `${p.qty} → ${p.agent}`).join("\n");
   const retypeNotice = isNoReplyAssign
     ? '\n\n⚠️ Lead Type will be updated to "No Reply Lead".'
     : "";
 
   if (
     !confirm(
-      "Assign leads by quantity?\n\n" +
-        summary +
-        "\n\nTotal: " +
-        totalRequested +
-        " leads" +
-        retypeNotice,
+      `Assign leads by quantity?\n\n${summary}\n\nTotal: ${totalRequested} leads${retypeNotice}`,
     )
   ) {
     return;
   }
 
-  // 6. Execute assignments (+ re-type to "No Reply Lead" when applicable)
+  // 5. Batch Execute
   setLoading(true);
-  try {
-    for (let i = 0; i < assignments.length; i++) {
-      const { lead, agent } = assignments[i];
-      await Graph.assignAgent(lead.id, agent);
+  let completed = 0;
+  let failed = 0;
+  const CHUNK_SIZE = 5;
 
-      if (isNoReplyAssign) {
-        await Graph.updateLead(lead.id, { Lead_x0020_Type: "No Reply Lead" });
-        lead.leadType = "No Reply Lead";
-      }
-      lead.assignedTo = agent;
+  try {
+    for (let i = 0; i < assignments.length; i += CHUNK_SIZE) {
+      const chunk = assignments.slice(i, i + CHUNK_SIZE);
+      await Promise.all(
+        chunk.map(async ({ lead, agent }) => {
+          try {
+            await Graph.assignAgent(lead.id, agent);
+            if (isNoReplyAssign) {
+              await Graph.updateLead(lead.id, { Lead_x0020_Type: "No Reply Lead" });
+              lead.leadType = "No Reply Lead";
+            }
+            lead.assignedTo = agent;
+            completed++;
+          } catch (itemErr) {
+            failed++;
+            console.error(`Failed assigning lead #${lead.id} to ${agent}:`, itemErr);
+          }
+        }),
+      );
     }
 
-    UI.showToast(
-      "Assigned " +
-        totalRequested +
-        (isNoReplyAssign ? " No Reply" : "") +
-        " leads successfully!",
-      "success",
-    );
-    await loadAllData();
-    renderAssignLeads();
-  } catch (err) {
-    UI.showToast("Failed: " + err.message, "error");
+    if (failed === 0) {
+      UI.showToast(
+        `Assigned ${completed}${isNoReplyAssign ? " No Reply" : ""} leads successfully!`,
+        "success",
+      );
+    } else {
+      UI.showToast(
+        `Assigned ${completed} leads, ${failed} failed (check console).`,
+        "warning",
+      );
+    }
   } finally {
+    if (completed > 0) {
+      await loadAllData();
+      renderAssignLeads();
+    }
     setLoading(false);
   }
 }
