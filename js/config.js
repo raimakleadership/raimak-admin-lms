@@ -53,7 +53,7 @@ const Config = {
     "Do Not Call",
     "Sold",
     "FNQ",
-    "Already has VZ",
+    "Already has Fiber",
     "TDM",
     "D2D Lead",
   ],
