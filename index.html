@@ -632,7 +632,7 @@
       </section>
     </template>
     
-    <template id="tmpl-my-leads">
+  <template id="tmpl-my-leads">
       <div class="view-header">
         <div>
           <h1 class="view-title">My Leads // SMS Console</h1>
@@ -677,7 +677,6 @@
             </div>
           </div>
 
-          <!-- 🚀 HIDE SMS STATS FROM NON-ADMINS -->
           <div class="contacts-today-badge" id="myleads-contact-badge">
             <style>
               .viz-card {
@@ -719,14 +718,14 @@
             </style>
 
             <div class="viz-card">
-              <div class="viz-icon">💬</div>
+              <div class="viz-icon">📞</div>
               <div style="display: flex; flex-direction: column; justify-content: center; position: relative; z-index: 2;">
                 <span style="font-family: var(--font-mono, monospace); font-size: 9px; text-transform: uppercase; letter-spacing: 2px; color: #94a3b8; line-height: 1; margin-bottom: 3px; font-weight: 700;">
-                  Texts Today
+                  Contacts Today
                 </span>
                 <span style="font-size: 18px; font-weight: 800; color: #f8fafc; line-height: 1; text-shadow: 0 0 10px rgba(255,255,255,0.2);">
-                  <span id="myleads-sms-count">0</span> 
-                  <span style="font-size: 11px; font-weight: 600; color: #ed1c24; text-shadow: 0 0 8px rgba(237, 28, 36, 0.4);">sent</span>
+                  <span id="myleads-contact-text">0</span>
+                  <span style="font-size: 11px; font-weight: 600; color: #ed1c24; text-shadow: 0 0 8px rgba(237, 28, 36, 0.4);">worked</span>
                 </span>
               </div>
             </div>

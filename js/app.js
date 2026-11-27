@@ -2256,8 +2256,7 @@ function renderMyLeads(tab = window._currentMyLeadsTab) {
       myLeads = buckets[tab] || [];
     } else {
       if (!tab || !["nr_leads", "tt_leads"].includes(tab)) {
-        tab =
-          nrQueueCount === 0 && ttQueueCount > 0 ? "tt_leads" : "nr_leads";
+        tab = nrQueueCount === 0 && ttQueueCount > 0 ? "tt_leads" : "nr_leads";
       }
       window._currentMyLeadsTab = tab;
       myLeads = tab === "tt_leads" ? ttLeadsQueue : nrLeadsQueue;
@@ -2570,44 +2569,79 @@ function getMyContactsToday() {
   const logs = State.activityLog || [];
   const user = State.currentUser || {};
 
-  const myEmail = (user.email || "").toLowerCase().trim();
-  let myName = (user.name || "").toLowerCase().trim();
+  const norm = (s) =>
+    String(s || "")
+      .toLowerCase()
+      .replace(/\s+/g, " ")
+      .trim();
 
-  const contractor = State.contractors.find(
-    (c) =>
-      (c.email || "").toLowerCase().trim() === myEmail ||
-      (c.name || "").toLowerCase().trim() === myName,
+  const myEmail = norm(user.email);
+  const myUserName = norm(user.name);
+
+  const contractor = (State.contractors || []).find(
+    (c) => norm(c.email) === myEmail || norm(c.name) === myUserName,
   );
-  if (contractor) myName = contractor.name.toLowerCase().trim();
 
-  // 1. Get today's local date (e.g., "4/18/2026")
-  const todayString = new Date().toLocaleDateString();
+  // Match any identity format used by ActivityLog (Entra name, contractor name, or email)
+  const myIdentities = new Set(
+    [
+      myEmail,
+      myUserName,
+      contractor ? norm(contractor.name) : "",
+      contractor ? norm(contractor.email) : "",
+    ].filter(Boolean),
+  );
+
+  const now = new Date();
+  const isToday = (val) => {
+    if (!val) return false;
+    const d = new Date(val);
+    if (isNaN(d.getTime())) return false;
+    return (
+      d.getFullYear() === now.getFullYear() &&
+      d.getMonth() === now.getMonth() &&
+      d.getDate() === now.getDate()
+    );
+  };
 
   const uniqueLeads = new Set();
 
   logs.forEach((log) => {
-    const entryAgent = (log.agent || log.AgentEmail || "").toLowerCase().trim();
-    const actionStr = log.action || log.ActionType || "";
+    const entryAgent = norm(
+      log.agent || log.AgentEmail || log.AgentName || log.Agent || "",
+    );
+    const actionLower = String(log.action || log.ActionType || "")
+      .trim()
+      .toLowerCase();
     const leadId = log.leadId || log.LeadID;
+    const rawTs =
+      log.timestamp || log.Timestamp || log.createdAt || log.Created;
 
-    // 2. Convert the log's timestamp to a local date string and compare
-    let isToday = false;
-    if (log.timestamp) {
-      isToday = new Date(log.timestamp).toLocaleDateString() === todayString;
-    }
+    if (!leadId || !myIdentities.has(entryAgent) || !isToday(rawTs)) return;
 
-    const isMyLog = entryAgent === myEmail || entryAgent === myName;
     const isContact =
-      actionStr.startsWith("Status:") ||
-      actionStr === "1st Contact" ||
-      actionStr === "2nd Contact" ||
-      actionStr === "3rd Contact";
+      actionLower.startsWith("status:") ||
+      actionLower === "1st contact" ||
+      actionLower === "2nd contact" ||
+      actionLower === "3rd contact" ||
+      actionLower === "sold" ||
+      actionLower === "do not call" ||
+      actionLower === "pending order" ||
+      actionLower.startsWith("callback");
 
-    // 3. The new requirement: It MUST happen today
-    if (isMyLog && isContact && isToday && leadId) {
-      uniqueLeads.add(leadId);
+    if (isContact) {
+      uniqueLeads.add(String(leadId).trim());
     }
   });
+
+  // Include leads saved in the current session so the counter updates immediately before re-sync
+  if (window._sessionWorkedLeads instanceof Map) {
+    window._sessionWorkedLeads.forEach((ts, id) => {
+      if (isToday(ts) && id !== undefined && id !== null) {
+        uniqueLeads.add(String(id).trim());
+      }
+    });
+  }
 
   return uniqueLeads.size;
 }
@@ -3604,15 +3638,22 @@ function isAutoNoReplyLead(l) {
 
   // 3. Optional memory-only check (only if State.smsHistory is already in RAM)
   if (Array.isArray(State.smsHistory) && State.smsHistory.length > 0) {
-    const norm = (v) => String(v || "").replace(/\D/g, "").slice(-10);
+    const norm = (v) =>
+      String(v || "")
+        .replace(/\D/g, "")
+        .slice(-10);
     const lPhone = norm(l.cbr || l.CBR || l.phone || l.btn || l.BTN);
 
     const hasInbound = State.smsHistory.some((m) => {
       const f = m.fields || m;
-      const dir = String(f.direction || f.Direction || f.type || "").toLowerCase();
+      const dir = String(
+        f.direction || f.Direction || f.type || "",
+      ).toLowerCase();
       if (!/^(in|inbound|incoming|received|reply)$/.test(dir)) return false;
 
-      const mLeadId = String(f.leadId || f.LeadID || f.relatedLeadId || "").trim();
+      const mLeadId = String(
+        f.leadId || f.LeadID || f.relatedLeadId || "",
+      ).trim();
       if (mLeadId && mLeadId === String(l.id).trim()) return true;
 
       const mPhone = norm(f.customerPhone || f.phone || f.from || f.CBR);
@@ -3634,9 +3675,9 @@ function isAutoNoReplyLead(l) {
   );
   return Boolean(
     owner &&
-      (owner.role === "Admin" ||
-        owner.role === "admin" ||
-        owner.isAdmin === true),
+    (owner.role === "Admin" ||
+      owner.role === "admin" ||
+      owner.isAdmin === true),
   );
 }
 
@@ -4396,7 +4437,8 @@ async function bulkAssignByQuantity() {
     selectedStatusFilter === "auto_no_reply"
       ? leads.filter(isAutoNoReplyLead)
       : leads.filter(function (l) {
-          const isValidLead = l && l.id && (l.name || l.phone || l.BTN || l.btn);
+          const isValidLead =
+            l && l.id && (l.name || l.phone || l.BTN || l.btn);
           return (
             isValidLead &&
             !l.assignedTo &&
@@ -4454,8 +4496,10 @@ async function bulkAssignByQuantity() {
   const plan = [];
   contractors.forEach(function (c) {
     const qty =
-      parseInt((document.getElementById("qty-" + c.name) || {}).value || "0", 10) ||
-      0;
+      parseInt(
+        (document.getElementById("qty-" + c.name) || {}).value || "0",
+        10,
+      ) || 0;
     if (qty > 0) plan.push({ agent: c.name, qty: qty });
   });
 
@@ -4536,14 +4580,19 @@ async function bulkAssignByQuantity() {
           try {
             await Graph.assignAgent(lead.id, agent);
             if (isNoReplyAssign) {
-              await Graph.updateLead(lead.id, { Lead_x0020_Type: "No Reply Lead" });
+              await Graph.updateLead(lead.id, {
+                Lead_x0020_Type: "No Reply Lead",
+              });
               lead.leadType = "No Reply Lead";
             }
             lead.assignedTo = agent;
             completed++;
           } catch (itemErr) {
             failed++;
-            console.error(`Failed assigning lead #${lead.id} to ${agent}:`, itemErr);
+            console.error(
+              `Failed assigning lead #${lead.id} to ${agent}:`,
+              itemErr,
+            );
           }
         }),
       );
